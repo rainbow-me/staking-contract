@@ -35,7 +35,9 @@ interface IRNBWStaking {
     error NothingToCompound();
     error CannotWithdrawStakedToken();
     error NoChange();
+    error ExitFeeTooLow();
     error ExitFeeTooHigh();
+    error MinStakeTooHigh();
     error SignerAlreadyAdded();
     error SignerNotFound();
     error CannotRemoveLastSigner();

@@ -31,9 +31,11 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
                                 CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    uint256 public constant BASIS_POINTS = 10_000;
-    uint256 public constant MAX_EXIT_FEE_BPS = 3000;
-    uint256 public constant MAX_SIGNERS = 3;
+    uint256 public constant BASIS_POINTS = 10_000; // 100% in basis points
+    uint256 public constant MIN_EXIT_FEE_BPS = 100; // 1% minimum exit fee
+    uint256 public constant MAX_EXIT_FEE_BPS = 7500; // 75% maximum exit fee
+    uint256 public constant MAX_MIN_STAKE_AMOUNT = 1_000_000e18; // Upper bound for minStakeAmount
+    uint256 public constant MAX_SIGNERS = 3; // Maximum number of trusted signers
 
     bytes32 public constant STAKE_TYPEHASH =
         keccak256("Stake(address user,uint256 amount,uint256 nonce,uint256 expiry)");
@@ -59,6 +61,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public totalAllocatedCashback;
 
     mapping(address user => UserMeta meta) public userMeta;
+    /// @dev Nonces are shared across all signature-based operations (stake, unstake, compound, cashback).
+    /// A nonce used by one operation cannot be reused by another, even for a different action type.
     mapping(address user => mapping(uint256 nonce => bool used)) public usedNonces;
     mapping(address signer => bool trusted) internal _trustedSigners;
     uint256 public trustedSignerCount;
@@ -158,7 +162,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         uint256 nonce,
         uint256 expiry,
         bytes calldata signature
-    ) external nonReentrant {
+    ) external nonReentrant whenNotPaused {
         _validateSignature(
             user,
             nonce,
@@ -290,7 +294,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             uint256 excess = balance > obligated ? balance - obligated : 0;
             if (amount > excess) revert InsufficientExcess();
         }
-        IERC20(token).safeTransfer(msg.sender, amount);
+        IERC20(token).safeTransfer(safe, amount);
     }
 
     /// @inheritdoc IRNBWStaking
@@ -302,6 +306,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function setExitFeeBps(uint256 newExitFeeBps) external onlySafe {
+        if (newExitFeeBps < MIN_EXIT_FEE_BPS) revert ExitFeeTooLow();
         if (newExitFeeBps > MAX_EXIT_FEE_BPS) revert ExitFeeTooHigh();
         if (newExitFeeBps == exitFeeBps) revert NoChange();
         uint256 oldExitFeeBps = exitFeeBps;
@@ -318,6 +323,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function setMinStakeAmount(uint256 newMinStakeAmount) external onlySafe {
+        if (newMinStakeAmount > MAX_MIN_STAKE_AMOUNT) revert MinStakeTooHigh();
         if (newMinStakeAmount == minStakeAmount) revert NoChange();
         uint256 oldMinStakeAmount = minStakeAmount;
         minStakeAmount = newMinStakeAmount;
@@ -480,13 +486,22 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
                 sharesToMint = (cashback * totalShares) / totalPooledRnbw;
             }
 
-            // 4. Mint shares to user and update global totals
+            // 4. If cashback is too small to mint shares at the current rate,
+            //    restore it so the user retains it for a future compound
+            //    without blocking stake/unstake operations
+            if (sharesToMint == 0) {
+                meta.cashbackAllocated = cashback;
+                totalAllocatedCashback += cashback;
+                return 0;
+            }
+
+            // 5. Mint shares to user and update global totals
             //    NOTE: No token transfer needed - RNBW is pre-funded in contract
             shares[user] += sharesToMint;
             totalShares += sharesToMint;
             totalPooledRnbw += cashback;
 
-            // 5. Emit events
+            // 6. Emit events
             emit CashbackCompounded(user, cashback, sharesToMint);
             emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
         }
