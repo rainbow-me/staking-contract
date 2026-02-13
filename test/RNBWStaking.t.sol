@@ -339,10 +339,50 @@ contract RNBWStakingTest is Test {
         assertEq(randomToken.balanceOf(admin), 100 ether);
     }
 
-    function test_EmergencyWithdrawRevertStakedToken() public {
+    function test_EmergencyWithdrawExcessRnbw() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        rnbwToken.mint(address(staking), 50 ether);
+
         vm.prank(admin);
-        vm.expectRevert(IRNBWStaking.CannotWithdrawStakedToken.selector);
-        staking.emergencyWithdraw(address(rnbwToken), 100 ether);
+        staking.emergencyWithdraw(address(rnbwToken), 50 ether);
+
+        assertEq(rnbwToken.balanceOf(admin), 50 ether);
+    }
+
+    function test_EmergencyWithdrawRevertInsufficientExcess() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.InsufficientExcess.selector);
+        staking.emergencyWithdraw(address(rnbwToken), 1 ether);
+    }
+
+    function test_SetSafe() public {
+        address newSafe = makeAddr("newSafe");
+
+        vm.prank(admin);
+        staking.setSafe(newSafe);
+
+        assertEq(staking.safe(), newSafe);
+    }
+
+    function test_SetSafeRevertZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
+        staking.setSafe(address(0));
+    }
+
+    function test_SetSafeRevertUnauthorized() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.setSafe(makeAddr("newSafe"));
     }
 
     function test_DomainSeparator() public view {

@@ -68,6 +68,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     //////////////////////////////////////////////////////////////*/
 
     constructor(address _rnbwToken, address _safe, address _initialSigner) EIP712("RNBWStaking", "1") {
+        if (_rnbwToken == address(0)) revert ZeroAddress();
         if (_safe == address(0)) revert ZeroAddress();
         if (_initialSigner == address(0)) revert ZeroAddress();
 
@@ -139,6 +140,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function compoundWithSignature(address user, uint256 nonce, uint256 expiry, bytes calldata signature)
         external
         nonReentrant
+        whenNotPaused
     {
         _validateSignature(
             user, nonce, expiry, keccak256(abi.encode(COMPOUND_TYPEHASH, user, nonce, expiry)), signature
@@ -282,8 +284,20 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function emergencyWithdraw(address token, uint256 amount) external onlySafe {
-        if (token == address(RNBW_TOKEN)) revert CannotWithdrawStakedToken();
+        if (token == address(RNBW_TOKEN)) {
+            uint256 obligated = totalPooledRnbw + totalAllocatedCashback;
+            uint256 balance = RNBW_TOKEN.balanceOf(address(this));
+            uint256 excess = balance > obligated ? balance - obligated : 0;
+            if (amount > excess) revert InsufficientExcess();
+        }
         IERC20(token).safeTransfer(msg.sender, amount);
+    }
+
+    /// @inheritdoc IRNBWStaking
+    function setSafe(address newSafe) external onlySafe {
+        if (newSafe == address(0)) revert ZeroAddress();
+        emit SafeUpdated(safe, newSafe);
+        safe = newSafe;
     }
 
     /// @inheritdoc IRNBWStaking
