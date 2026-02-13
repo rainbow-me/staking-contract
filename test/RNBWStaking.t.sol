@@ -427,7 +427,13 @@ contract RNBWStakingTest is Test {
     function test_SetExitFeeBpsRevertTooHigh() public {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.ExitFeeTooHigh.selector);
-        staking.setExitFeeBps(3001);
+        staking.setExitFeeBps(7501);
+    }
+
+    function test_SetExitFeeBpsRevertTooLow() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ExitFeeTooLow.selector);
+        staking.setExitFeeBps(99);
     }
 
     function test_SetExitFeeBpsRevertNoChange() public {
@@ -446,6 +452,12 @@ contract RNBWStakingTest is Test {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.NoChange.selector);
         staking.setMinStakeAmount(1 ether);
+    }
+
+    function test_SetMinStakeAmountRevertTooHigh() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.MinStakeTooHigh.selector);
+        staking.setMinStakeAmount(1_000_001e18);
     }
 
     function test_ExitFeeUsesNewRate() public {

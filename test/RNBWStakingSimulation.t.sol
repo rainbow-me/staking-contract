@@ -3,6 +3,7 @@ pragma solidity 0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
 import {RNBWStaking} from "../src/RNBWStaking.sol";
+import {IRNBWStaking} from "../src/interfaces/IRNBWStaking.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
@@ -152,6 +153,24 @@ contract RNBWStakingSimulation is Test {
         allocateNonce++;
     }
 
+    function _signStake(address user, uint256 amount, uint256 nonce, uint256 expiry)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 structHash = keccak256(abi.encode(staking.STAKE_TYPEHASH(), user, amount, nonce, expiry));
+        bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _signCompound(address user, uint256 nonce, uint256 expiry) internal view returns (bytes memory) {
+        bytes32 structHash = keccak256(abi.encode(staking.COMPOUND_TYPEHASH(), user, nonce, expiry));
+        bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
     function _logPosition(string memory label, address user) internal view {
         (uint256 staked, uint256 userShares, uint256 cashback, uint256 lastUpdate, uint256 stakingStart) =
             staking.getPosition(user);
@@ -262,5 +281,272 @@ contract RNBWStakingSimulation is Test {
         console.log("=== DIRECT UNSTAKE COMPLETE ===");
 
         assertEq(received, 8500 ether);
+    }
+
+    function test_Simulation_ResidualDustSweep() public {
+        console.log("");
+        console.log("=== RESIDUAL DUST SWEEP (ISSUE #1 FIX) ===");
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 10_000 ether);
+        staking.stake(10_000 ether);
+        vm.stopPrank();
+        console.log("Alice staked 10,000 RNBW");
+
+        uint256 safeBefore = rnbwToken.balanceOf(admin);
+        uint256 aliceShares = staking.shares(alice);
+
+        vm.prank(alice);
+        staking.unstake(aliceShares);
+
+        console.log("Alice unstaked all shares");
+        console.log("totalShares:", staking.totalShares());
+        console.log("totalPooledRnbw:", staking.totalPooledRnbw());
+        console.log("Dust swept to safe:", (rnbwToken.balanceOf(admin) - safeBefore) / 1e18);
+
+        assertEq(staking.totalShares(), 0);
+        assertEq(staking.totalPooledRnbw(), 0);
+        assertGt(rnbwToken.balanceOf(admin), safeBefore);
+        console.log("=== INVARIANT HOLDS: totalShares==0 => totalPooledRnbw==0 ===");
+    }
+
+    function test_Simulation_StakeViaRelayer() public {
+        console.log("");
+        console.log("=== STAKE VIA RELAYER (stakeWithSignature) ===");
+
+        uint256 amount = 10_000 ether;
+        uint256 nonce = 100;
+        uint256 expiry = block.timestamp + 60;
+        bytes memory sig = _signStake(alice, amount, nonce, expiry);
+
+        vm.prank(alice);
+        rnbwToken.approve(address(staking), amount);
+
+        address relayer = makeAddr("relayer");
+        vm.prank(relayer);
+        staking.stakeWithSignature(alice, amount, nonce, expiry, sig);
+
+        (uint256 staked,,,,) = staking.getPosition(alice);
+        console.log("Relayer submitted stakeWithSignature for Alice");
+        console.log("Alice staked:", staked / 1e18);
+        console.log("Relayer address:", relayer);
+        console.log("=== RELAYER STAKE COMPLETE ===");
+
+        assertEq(staked, amount);
+        assertEq(staking.shares(alice), amount);
+    }
+
+    function test_Simulation_CompoundWithSignature() public {
+        console.log("");
+        console.log("=== COMPOUND VIA SIGNATURE ===");
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 50_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        _allocateCashback(alice, 2000 ether);
+
+        (,, uint256 cashbackBefore,,) = staking.getPosition(alice);
+        console.log("Cashback before compound:", cashbackBefore / 1e18);
+
+        uint256 nonce = 200;
+        uint256 expiry = block.timestamp + 60;
+        bytes memory sig = _signCompound(alice, nonce, expiry);
+        staking.compoundWithSignature(alice, nonce, expiry, sig);
+
+        (uint256 stakedAfter,, uint256 cashbackAfter,,) = staking.getPosition(alice);
+        console.log("Cashback after compound:", cashbackAfter);
+        console.log("Staked after compound:", stakedAfter / 1e18);
+        console.log("=== COMPOUND COMPLETE ===");
+
+        assertEq(cashbackAfter, 0);
+        assertEq(stakedAfter, 52_000 ether);
+    }
+
+    function test_Simulation_DustCashbackPreserved() public {
+        console.log("");
+        console.log("=== DUST CASHBACK PRESERVED (ISSUE #9 FIX) ===");
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 50_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 50_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        uint256 bobShares = staking.shares(bob);
+        vm.prank(bob);
+        staking.unstake(bobShares);
+
+        _allocateCashback(alice, 1);
+        console.log("Allocated 1 wei cashback to Alice");
+
+        (,, uint256 cashbackBefore,,) = staking.getPosition(alice);
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 1000 ether);
+        staking.stake(1000 ether);
+        vm.stopPrank();
+
+        (,, uint256 cashbackAfter,,) = staking.getPosition(alice);
+        console.log("Cashback before stake:", cashbackBefore);
+        console.log("Cashback after stake:", cashbackAfter);
+        console.log("Dust preserved (not lost):", cashbackAfter > 0);
+        console.log("=== DUST CASHBACK NOT LOST ===");
+
+        assertEq(cashbackAfter, 1);
+    }
+
+    function test_Simulation_NonceReplayPrevention() public {
+        console.log("");
+        console.log("=== NONCE REPLAY PREVENTION ===");
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 20_000 ether);
+        staking.stake(10_000 ether);
+        vm.stopPrank();
+
+        uint256 nonce = 999;
+        uint256 expiry = block.timestamp + 60;
+
+        bytes32 structHash = keccak256(abi.encode(staking.UNSTAKE_TYPEHASH(), alice, 5000 ether, nonce, expiry));
+        bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
+        bytes memory sig = abi.encodePacked(r, s, v);
+
+        staking.unstakeWithSignature(alice, 5000 ether, nonce, expiry, sig);
+        console.log("First unstake succeeded with nonce:", nonce);
+        assertTrue(staking.isNonceUsed(alice, nonce));
+
+        vm.expectRevert(IRNBWStaking.NonceAlreadyUsed.selector);
+        staking.unstakeWithSignature(alice, 5000 ether, nonce, expiry, sig);
+        console.log("Replay reverted as expected");
+        console.log("=== REPLAY PREVENTION VERIFIED ===");
+    }
+
+    function test_Simulation_ExpiredSignatureReverts() public {
+        console.log("");
+        console.log("=== EXPIRED SIGNATURE ===");
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 10_000 ether);
+        staking.stake(10_000 ether);
+        vm.stopPrank();
+
+        uint256 nonce = 500;
+        uint256 expiry = block.timestamp + 60;
+
+        bytes32 structHash = keccak256(abi.encode(staking.UNSTAKE_TYPEHASH(), alice, 5000 ether, nonce, expiry));
+        bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
+        bytes memory sig = abi.encodePacked(r, s, v);
+
+        vm.warp(expiry + 1);
+
+        vm.expectRevert(IRNBWStaking.SignatureExpired.selector);
+        staking.unstakeWithSignature(alice, 5000 ether, nonce, expiry, sig);
+        console.log("Expired signature correctly reverted");
+        console.log("=== EXPIRY CHECK VERIFIED ===");
+    }
+
+    function test_Simulation_PausedContractBlocks() public {
+        console.log("");
+        console.log("=== PAUSED CONTRACT ===");
+
+        vm.prank(admin);
+        staking.pause();
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 10_000 ether);
+        vm.expectRevert();
+        staking.stake(10_000 ether);
+        vm.stopPrank();
+        console.log("Stake blocked while paused");
+
+        vm.prank(admin);
+        staking.unpause();
+
+        vm.startPrank(alice);
+        staking.stake(10_000 ether);
+        vm.stopPrank();
+        console.log("Stake succeeded after unpause");
+
+        assertEq(staking.shares(alice), 10_000 ether);
+        console.log("=== PAUSE/UNPAUSE VERIFIED ===");
+    }
+
+    function test_Simulation_MultiStakerExitFeeAccrual() public {
+        console.log("");
+        console.log("=== THREE-STAKER EXIT FEE ACCRUAL ===");
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 40_000 ether);
+        staking.stake(40_000 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 30_000 ether);
+        staking.stake(30_000 ether);
+        vm.stopPrank();
+
+        vm.startPrank(charlie);
+        rnbwToken.approve(address(staking), 30_000 ether);
+        staking.stake(30_000 ether);
+        vm.stopPrank();
+
+        console.log("Alice: 40k, Bob: 30k, Charlie: 30k");
+        uint256 rateBefore = staking.getExchangeRate();
+
+        uint256 charlieShares = staking.shares(charlie);
+        vm.prank(charlie);
+        staking.unstake(charlieShares);
+        console.log("Charlie unstaked all (15% fee stays in pool)");
+
+        uint256 rateAfter = staking.getExchangeRate();
+        console.log("Exchange rate before:", rateBefore);
+        console.log("Exchange rate after:", rateAfter);
+
+        (uint256 aliceVal,,,,) = staking.getPosition(alice);
+        (uint256 bobVal,,,,) = staking.getPosition(bob);
+        console.log("Alice value:", aliceVal / 1e18);
+        console.log("Bob value:", bobVal / 1e18);
+        console.log("=== FEE DISTRIBUTED PROPORTIONALLY ===");
+
+        assertGt(rateAfter, rateBefore);
+        assertGt(aliceVal, 40_000 ether);
+        assertGt(bobVal, 30_000 ether);
+    }
+
+    function test_Simulation_SharedNonceNamespace() public {
+        console.log("");
+        console.log("=== SHARED NONCE NAMESPACE ===");
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 20_000 ether);
+        staking.stake(10_000 ether);
+        vm.stopPrank();
+
+        uint256 nonce = 42;
+        uint256 expiry = block.timestamp + 60;
+        bytes memory stakeSig = _signStake(alice, 5000 ether, nonce, expiry);
+
+        vm.prank(alice);
+        rnbwToken.approve(address(staking), 5000 ether);
+        staking.stakeWithSignature(alice, 5000 ether, nonce, expiry, stakeSig);
+        console.log("stakeWithSignature used nonce 42");
+
+        bytes32 structHash = keccak256(abi.encode(staking.UNSTAKE_TYPEHASH(), alice, 1000 ether, nonce, expiry));
+        bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
+        bytes memory unstakeSig = abi.encodePacked(r, s, v);
+
+        vm.expectRevert(IRNBWStaking.NonceAlreadyUsed.selector);
+        staking.unstakeWithSignature(alice, 1000 ether, nonce, expiry, unstakeSig);
+        console.log("unstakeWithSignature with same nonce 42 reverted");
+        console.log("=== SHARED NAMESPACE CONFIRMED ===");
     }
 }
