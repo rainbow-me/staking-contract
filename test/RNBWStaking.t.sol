@@ -480,4 +480,25 @@ contract RNBWStakingTest is Test {
 
         assertEq(received, 90 ether);
     }
+
+    function test_ShareInflationAttackReverts() public {
+        rnbwToken.mint(alice, 100_000 ether);
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), type(uint256).max);
+        staking.stake(7 ether);
+
+        uint256 aliceShares = staking.shares(alice);
+        staking.unstake(aliceShares - 1);
+        vm.stopPrank();
+
+        assertEq(staking.totalShares(), 1);
+        assertGt(staking.totalPooledRnbw(), 1 ether);
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 1 ether);
+        vm.expectRevert(IRNBWStaking.ZeroSharesMinted.selector);
+        staking.stake(1 ether);
+        vm.stopPrank();
+    }
 }
