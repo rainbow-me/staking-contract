@@ -6,15 +6,13 @@ pragma solidity 0.8.24;
 /// @custom:security-contact security@rainbow.me
 interface IRNBWStaking {
     struct UserMeta {
-        uint256 cashbackAllocated;
         uint256 lastUpdateTime;
         uint256 stakingStartTime;
     }
 
     event Staked(address indexed user, uint256 rnbwAmount, uint256 sharesMinted, uint256 newShareBalance);
     event Unstaked(address indexed user, uint256 sharesBurned, uint256 rnbwValue, uint256 exitFee, uint256 netReceived);
-    event CashbackAllocated(address indexed user, uint256 rnbwAmount);
-    event CashbackCompounded(address indexed user, uint256 rnbwAmount, uint256 sharesMinted);
+    event CashbackAllocated(address indexed user, uint256 rnbwAmount, uint256 sharesMinted);
     event SignerAdded(address indexed signer);
     event SignerRemoved(address indexed signer);
     event ExchangeRateUpdated(uint256 totalPooledRnbw, uint256 totalShares);
@@ -32,7 +30,6 @@ interface IRNBWStaking {
     error InvalidSignature();
     error SignatureExpired();
     error NonceAlreadyUsed();
-    error NothingToCompound();
     error CannotWithdrawStakedToken();
     error NoChange();
     error ExitFeeTooLow();
@@ -61,8 +58,6 @@ interface IRNBWStaking {
         bytes calldata signature
     ) external;
 
-    function compoundWithSignature(address user, uint256 nonce, uint256 expiry, bytes calldata signature) external;
-
     function allocateCashbackWithSignature(
         address user,
         uint256 rnbwCashback,
@@ -74,13 +69,7 @@ interface IRNBWStaking {
     function getPosition(address user)
         external
         view
-        returns (
-            uint256 stakedAmount,
-            uint256 userShares,
-            uint256 cashbackAllocated,
-            uint256 lastUpdateTime,
-            uint256 stakingStartTime
-        );
+        returns (uint256 stakedAmount, uint256 userShares, uint256 lastUpdateTime, uint256 stakingStartTime);
 
     function getRnbwForShares(uint256 sharesAmount) external view returns (uint256);
 

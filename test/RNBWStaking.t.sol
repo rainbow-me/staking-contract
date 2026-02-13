@@ -157,11 +157,10 @@ contract RNBWStakingTest is Test {
         staking.stake(amount);
         vm.stopPrank();
 
-        (uint256 stakedAmount, uint256 userShares, uint256 cashback,,) = staking.getPosition(alice);
+        (uint256 stakedAmount, uint256 userShares,,) = staking.getPosition(alice);
 
         assertEq(stakedAmount, amount);
         assertEq(userShares, amount);
-        assertEq(cashback, 0);
     }
 
     function test_ExchangeRateInitial() public view {
@@ -192,9 +191,10 @@ contract RNBWStakingTest is Test {
 
         staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, sig);
 
-        (,, uint256 cashback,,) = staking.getPosition(alice);
-        assertEq(cashback, 10 ether);
-        assertEq(staking.totalAllocatedCashback(), 10 ether);
+        (uint256 stakedAmount, uint256 userShares,,) = staking.getPosition(alice);
+        assertEq(stakedAmount, 110 ether);
+        assertEq(userShares, 100 ether + 10 ether);
+        assertEq(staking.totalPooledRnbw(), 110 ether);
     }
 
     function test_AllocateCashbackRevertNoPosition() public {
@@ -220,6 +220,20 @@ contract RNBWStakingTest is Test {
 
         vm.expectRevert(IRNBWStaking.InsufficientCashbackBalance.selector);
         staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, sig);
+    }
+
+    function test_AllocateCashbackRevertZeroAmount() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 nonce = 1;
+        uint256 expiry = block.timestamp + 60;
+        bytes memory sig = _signAllocateCashback(alice, 0, nonce, expiry);
+
+        vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
+        staking.allocateCashbackWithSignature(alice, 0, nonce, expiry, sig);
     }
 
     function test_DepositCashbackRewards() public {
