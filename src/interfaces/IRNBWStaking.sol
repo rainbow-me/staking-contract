@@ -21,6 +21,7 @@ interface IRNBWStaking {
     event ExitFeeBpsUpdated(uint256 indexed oldExitFeeBps, uint256 indexed newExitFeeBps);
     event MinStakeAmountUpdated(uint256 indexed oldMinStakeAmount, uint256 indexed newMinStakeAmount);
     event CashbackRewardsDeposited(address indexed from, uint256 amount);
+    event SafeUpdated(address indexed oldSafe, address indexed newSafe);
 
     error ZeroAddress();
     error Unauthorized();
@@ -40,6 +41,7 @@ interface IRNBWStaking {
     error CannotRemoveLastSigner();
     error MaxSignersReached();
     error InsufficientCashbackBalance();
+    error InsufficientExcess();
 
     function stake(uint256 amount) external;
 
@@ -104,4 +106,6 @@ interface IRNBWStaking {
     function setMinStakeAmount(uint256 newMinStakeAmount) external;
 
     function depositCashbackRewards(uint256 amount) external;
+
+    function setSafe(address newSafe) external;
 }
