@@ -423,17 +423,37 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         totalShares -= sharesToBurn;
         totalPooledRnbw -= netAmount; // exitFee remains in pool!
 
-        // 6. Update user metadata
+        // 6. Reset totalPooledRnbw when all shares are burned to prevent
+        //    share inflation attack. Without this, orphaned exit-fee RNBW
+        //    would remain in totalPooledRnbw while totalShares == 0.
+        //    The next staker would hit the `totalShares == 0` branch (1:1 minting)
+        //    but totalPooledRnbw += amount would stack on top of the orphaned dust,
+        //    creating an accounting desync where the pool has more RNBW than shares
+        //    represent. We sweep residual dust to the safe so the invariant
+        //    `totalShares == 0 ⟹ totalPooledRnbw == 0` always holds.
+        uint256 residual;
+        if (totalShares == 0 && totalPooledRnbw > 0) {
+            residual = totalPooledRnbw;
+            totalPooledRnbw = 0;
+        }
+
+        // 7. Update user metadata
         UserMeta storage meta = userMeta[user];
         meta.lastUpdateTime = block.timestamp;
         if (shares[user] == 0) {
             meta.stakingStartTime = 0;
         }
 
-        // 7. Transfer net RNBW to user (after exit fee deduction)
+        // 8. Transfer net RNBW to user (after exit fee deduction)
         RNBW_TOKEN.safeTransfer(user, netAmount);
 
-        // 8. Emit events
+        // 9. Sweep residual dust to safe (done after user transfer to keep
+        //    reentrancy surface minimal and state fully settled first)
+        if (residual > 0) {
+            RNBW_TOKEN.safeTransfer(safe, residual);
+        }
+
+        // 10. Emit events
         emit Unstaked(user, sharesToBurn, rnbwValue, exitFee, netAmount);
         emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
     }
