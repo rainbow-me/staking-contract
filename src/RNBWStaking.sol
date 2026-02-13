@@ -385,19 +385,25 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             sharesToMint = (amount * totalShares) / totalPooledRnbw;
         }
 
-        // 5. Update user's share balance and global totals
+        // 5. Prevent share inflation attack: if exchange rate is so high that
+        //    the deposit rounds to 0 shares, revert to protect the depositor.
+        //    Without this, the depositor's RNBW would be absorbed into the pool
+        //    with no shares minted, effectively donating to existing stakers.
+        if (sharesToMint == 0) revert ZeroSharesMinted();
+
+        // 6. Update user's share balance and global totals
         shares[user] += sharesToMint;
         totalShares += sharesToMint;
         totalPooledRnbw += amount;
 
-        // 6. Update user metadata (timestamps)
+        // 7. Update user metadata (timestamps)
         UserMeta storage meta = userMeta[user];
         if (meta.stakingStartTime == 0) {
             meta.stakingStartTime = block.timestamp;
         }
         meta.lastUpdateTime = block.timestamp;
 
-        // 7. Emit events
+        // 8. Emit events
         emit Staked(user, amount, sharesToMint, shares[user]);
         emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
     }

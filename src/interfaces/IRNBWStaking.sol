@@ -44,6 +44,7 @@ interface IRNBWStaking {
     error MaxSignersReached();
     error InsufficientCashbackBalance();
     error InsufficientExcess();
+    error ZeroSharesMinted();
 
     function stake(uint256 amount) external;
 
