@@ -11,12 +11,12 @@ Shares-based staking contract for **$RNBW** on Base. Exit fees stay in the pool 
 
 | Feature | Details |
 |---------|---------|
-| Staking | `stake()` (direct) or `stakeWithSignature()` (relayer/backend) |
-| Unstaking | `unstake()` (direct) or `unstakeWithSignature()` (relayer/backend) |
+| Staking | `stake()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702) |
+| Unstaking | `unstake()` -- user calls directly or via relay |
 | Exit fee | Configurable 1%--75%, default 15% -- stays in pool |
 | Cashback | Backend allocates via `allocateCashbackWithSignature()` -- mints shares immediately in one step |
 | Access control | Safe (multisig) for admin ops, up to 3 trusted EIP-712 signers |
-| Signatures | EIP-712 with expiry + nonce replay protection |
+| Signatures | EIP-712 with expiry + nonce replay protection (cashback only) |
 
 ## How It Works
 
@@ -35,7 +35,7 @@ The first staker gets shares at a 1:1 ratio. Every subsequent staker gets shares
 
 ### Staking Flow
 
-**Entry points:** `stake(amount)` (user calls directly) or `stakeWithSignature(user, amount, nonce, expiry, sig)` (relayer submits with backend EIP-712 signature)
+**Entry point:** `stake(amount)` -- user calls directly or via relay service (Gelato Turbo, Relay.link, EIP-7702). `msg.sender` is always the user.
 
 **Steps:**
 
@@ -80,7 +80,7 @@ Charlie receives fewer shares because each share is now worth more than 1 RNBW.
 
 ### Unstaking Flow
 
-**Entry points:** `unstake(sharesToBurn)` (user calls directly) or `unstakeWithSignature(user, sharesToBurn, nonce, expiry, sig)` (relayer submits)
+**Entry point:** `unstake(sharesToBurn)` -- user calls directly or via relay service. `msg.sender` is always the user.
 
 **Important:** The parameter is **shares to burn**, not RNBW amount. The UI should convert a desired RNBW amount to shares: `sharesToBurn = getSharesForRnbw(desiredAmount)`. For full unstake, use `shares[user]`.
 
@@ -202,7 +202,7 @@ forge build
 forge test
 ```
 
-61 tests across two suites: unit tests (`RNBWStaking.t.sol`) and simulation tests (`RNBWStakingSimulation.t.sol`).
+58 tests across two suites: unit tests (`RNBWStaking.t.sol`) and simulation tests (`RNBWStakingSimulation.t.sol`).
 
 ```shell
 forge test -vvv                                          # verbose output
@@ -224,7 +224,7 @@ forge fmt
 
 ## EIP-7702 Compatibility
 
-The contract is compatible with EIP-7702 (account abstraction via code delegation). `stake()` and `unstake()` use `msg.sender`, so a 7702-delegated EOA can call them directly through its delegated code. Signature-based functions (`stakeWithSignature`, `unstakeWithSignature`, `allocateCashbackWithSignature`) work with any `msg.sender` since they validate the trusted backend signer, not the caller.
+The contract is compatible with EIP-7702 (account abstraction via code delegation). `stake()` and `unstake()` use `msg.sender`, so a 7702-delegated EOA can call them directly through its delegated code. These functions also work with Gelato Turbo Relayer and Relay.link, which use smart account patterns where `msg.sender` is the user's address. `allocateCashbackWithSignature()` works with any `msg.sender` since it validates the trusted backend signer, not the caller.
 
 ## Security
 

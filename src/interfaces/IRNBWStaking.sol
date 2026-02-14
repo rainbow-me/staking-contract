@@ -47,17 +47,6 @@ interface IRNBWStaking {
 
     function unstake(uint256 sharesToBurn) external;
 
-    function stakeWithSignature(address user, uint256 amount, uint256 nonce, uint256 expiry, bytes calldata signature)
-        external;
-
-    function unstakeWithSignature(
-        address user,
-        uint256 sharesToBurn,
-        uint256 nonce,
-        uint256 expiry,
-        bytes calldata signature
-    ) external;
-
     function allocateCashbackWithSignature(
         address user,
         uint256 rnbwCashback,
