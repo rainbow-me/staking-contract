@@ -61,7 +61,7 @@ contract RNBWStakingSimulation is Test {
         console.log("Total pooled:", staking.totalPooledRnbw() / 1e18);
         console.log("=== STAKING COMPLETE ===");
 
-        assertEq(staked, 25_000 ether);
+        assertApproxEqAbs(staked, 25_000 ether, staking.MINIMUM_SHARES());
     }
 
     function test_Simulation_CashbackFlow() public {
@@ -98,7 +98,7 @@ contract RNBWStakingSimulation is Test {
         console.log("=== CASHBACK FLOW COMPLETE ===");
 
         (uint256 stakedFinal,,,) = staking.getPosition(alice);
-        assertEq(stakedFinal, 50_000 ether + 500 ether + 1250 ether + 1000 ether);
+        assertApproxEqAbs(stakedFinal, 50_000 ether + 500 ether + 1250 ether + 1000 ether, staking.MINIMUM_SHARES());
     }
 
     uint256 internal allocateNonce = 1;
@@ -213,8 +213,9 @@ contract RNBWStakingSimulation is Test {
         staking.stake(10_000 ether);
         console.log("Alice staked 10,000 RNBW");
 
+        uint256 aliceShares = staking.shares(alice);
         uint256 balBefore = rnbwToken.balanceOf(alice);
-        staking.unstake(10_000 ether);
+        staking.unstake(aliceShares);
         uint256 received = rnbwToken.balanceOf(alice) - balBefore;
         vm.stopPrank();
 
@@ -223,7 +224,7 @@ contract RNBWStakingSimulation is Test {
         console.log("Exit fee paid: 1,500 RNBW");
         console.log("=== DIRECT UNSTAKE COMPLETE ===");
 
-        assertEq(received, 8500 ether);
+        assertApproxEqAbs(received, 8500 ether, staking.MINIMUM_SHARES());
     }
 
     function test_Simulation_ResidualDustSweep() public {
@@ -273,7 +274,7 @@ contract RNBWStakingSimulation is Test {
         console.log("=== CASHBACK COMPLETE ===");
 
         assertEq(sharesAfter, sharesBefore + 2000 ether);
-        assertEq(stakedAfter, 52_000 ether);
+        assertApproxEqAbs(stakedAfter, 52_000 ether, staking.MINIMUM_SHARES());
     }
 
     function test_Simulation_DustCashbackReverts() public {
@@ -390,7 +391,7 @@ contract RNBWStakingSimulation is Test {
         vm.stopPrank();
         console.log("Stake succeeded after unpause");
 
-        assertEq(staking.shares(alice), 10_000 ether);
+        assertEq(staking.shares(alice), 10_000 ether - staking.MINIMUM_SHARES());
         console.log("=== PAUSE/UNPAUSE VERIFIED ===");
     }
 

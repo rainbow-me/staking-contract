@@ -56,7 +56,8 @@ contract RNBWStakingTest is Test {
         staking.stake(amount);
         vm.stopPrank();
 
-        assertEq(staking.shares(alice), amount);
+        uint256 deadShares = staking.MINIMUM_SHARES();
+        assertEq(staking.shares(alice), amount - deadShares);
         assertEq(staking.totalShares(), amount);
         assertEq(staking.totalPooledRnbw(), amount);
         assertEq(rnbwToken.balanceOf(alice), INITIAL_BALANCE - amount);
@@ -101,11 +102,12 @@ contract RNBWStakingTest is Test {
         rnbwToken.approve(address(staking), stakeAmount);
         staking.stake(stakeAmount);
 
-        uint256 sharesToBurn = 50 ether;
+        uint256 aliceShares = staking.shares(alice);
+        uint256 sharesToBurn = aliceShares / 2;
         staking.unstake(sharesToBurn);
         vm.stopPrank();
 
-        assertEq(staking.shares(alice), 50 ether);
+        assertEq(staking.shares(alice), aliceShares - sharesToBurn);
     }
 
     function test_UnstakeRevertZeroAmount() public {
@@ -139,14 +141,15 @@ contract RNBWStakingTest is Test {
         rnbwToken.approve(address(staking), stakeAmount);
         staking.stake(stakeAmount);
 
+        uint256 aliceShares = staking.shares(alice);
         uint256 balanceBefore = rnbwToken.balanceOf(alice);
-        staking.unstake(stakeAmount);
+        staking.unstake(aliceShares);
         uint256 balanceAfter = rnbwToken.balanceOf(alice);
         vm.stopPrank();
 
         uint256 received = balanceAfter - balanceBefore;
         uint256 expectedNet = (stakeAmount * 8500) / 10_000;
-        assertEq(received, expectedNet);
+        assertApproxEqAbs(received, expectedNet, staking.MINIMUM_SHARES());
     }
 
     function test_GetPosition() public {
@@ -157,10 +160,11 @@ contract RNBWStakingTest is Test {
         staking.stake(amount);
         vm.stopPrank();
 
+        uint256 deadShares = staking.MINIMUM_SHARES();
         (uint256 stakedAmount, uint256 userShares,,) = staking.getPosition(alice);
 
-        assertEq(stakedAmount, amount);
-        assertEq(userShares, amount);
+        assertEq(userShares, amount - deadShares);
+        assertApproxEqAbs(stakedAmount, amount, deadShares);
     }
 
     function test_ExchangeRateInitial() public view {
@@ -191,9 +195,10 @@ contract RNBWStakingTest is Test {
 
         staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, sig);
 
+        uint256 deadShares = staking.MINIMUM_SHARES();
         (uint256 stakedAmount, uint256 userShares,,) = staking.getPosition(alice);
-        assertEq(stakedAmount, 110 ether);
-        assertEq(userShares, 100 ether + 10 ether);
+        assertApproxEqAbs(stakedAmount, 110 ether, deadShares);
+        assertEq(userShares, 100 ether + 10 ether - deadShares);
         assertEq(staking.totalPooledRnbw(), 110 ether);
     }
 
@@ -285,7 +290,7 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         vm.stopPrank();
 
-        assertEq(staking.shares(alice), 100 ether);
+        assertEq(staking.shares(alice), 100 ether - staking.MINIMUM_SHARES());
     }
 
     function test_AddTrustedSigner() public {
@@ -412,7 +417,7 @@ contract RNBWStakingTest is Test {
         staking.stake(amount);
         vm.stopPrank();
 
-        assertEq(staking.shares(alice), amount);
+        assertEq(staking.shares(alice), amount - staking.MINIMUM_SHARES());
     }
 
     function testFuzz_MultipleStakers(uint256 aliceAmount, uint256 bobAmount) public {
@@ -492,10 +497,10 @@ contract RNBWStakingTest is Test {
         staking.unstake(aliceShares);
         uint256 received = rnbwToken.balanceOf(alice) - balBefore;
 
-        assertEq(received, 90 ether);
+        assertApproxEqAbs(received, 90 ether, staking.MINIMUM_SHARES());
     }
 
-    function test_ShareInflationAttackReverts() public {
+    function test_ShareInflationAttackMitigatedByDeadShares() public {
         rnbwToken.mint(alice, 100_000 ether);
 
         vm.startPrank(alice);
@@ -506,13 +511,15 @@ contract RNBWStakingTest is Test {
         staking.unstake(aliceShares - 1);
         vm.stopPrank();
 
-        assertEq(staking.totalShares(), 1);
+        uint256 deadShares = staking.MINIMUM_SHARES();
+        assertEq(staking.totalShares(), 1 + deadShares);
         assertGt(staking.totalPooledRnbw(), 1 ether);
 
         vm.startPrank(bob);
         rnbwToken.approve(address(staking), 1 ether);
-        vm.expectRevert(IRNBWStaking.ZeroSharesMinted.selector);
         staking.stake(1 ether);
         vm.stopPrank();
+
+        assertGt(staking.shares(bob), 0);
     }
 }
