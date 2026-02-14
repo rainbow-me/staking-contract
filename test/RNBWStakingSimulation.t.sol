@@ -64,41 +64,6 @@ contract RNBWStakingSimulation is Test {
         assertEq(staked, 25_000 ether);
     }
 
-    function test_Simulation_UnstakingViaRelayer() public {
-        console.log("");
-        console.log("=== FLOW 3.4.2: UNSTAKING (BACKEND RELAYER) ===");
-
-        vm.startPrank(alice);
-        rnbwToken.approve(address(staking), 10_000 ether);
-        staking.stake(10_000 ether);
-        vm.stopPrank();
-        console.log("SETUP: Alice staked 10,000 RNBW");
-
-        console.log("STEP 1: Backend generates EIP-712 signature");
-        uint256 nonce = 12_345;
-        uint256 expiry = block.timestamp + 60;
-
-        bytes32 structHash = keccak256(abi.encode(staking.UNSTAKE_TYPEHASH(), alice, 10_000 ether, nonce, expiry));
-        bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
-        bytes memory sig = abi.encodePacked(r, s, v);
-
-        console.log("STEP 2: Relayer submits unstakeWithSignature");
-        uint256 balBefore = rnbwToken.balanceOf(alice);
-
-        staking.unstakeWithSignature(alice, 10_000 ether, nonce, expiry, sig);
-
-        uint256 received = rnbwToken.balanceOf(alice) - balBefore;
-        console.log("STEP 3: Exit fee calculation");
-        console.log("Gross: 10,000 RNBW");
-        console.log("Exit fee (15%): 1,500 RNBW");
-        console.log("Net received:", received / 1e18);
-        console.log("Nonce used:", staking.isNonceUsed(alice, nonce));
-        console.log("=== UNSTAKING COMPLETE ===");
-
-        assertEq(received, 8500 ether);
-    }
-
     function test_Simulation_CashbackFlow() public {
         console.log("");
         console.log("=== FLOW 3.4.3: CASHBACK FLOW ===");
@@ -149,17 +114,6 @@ contract RNBWStakingSimulation is Test {
         rnbwToken.mint(address(staking), amount);
         staking.allocateCashbackWithSignature(user, amount, allocateNonce, expiry, sig);
         allocateNonce++;
-    }
-
-    function _signStake(address user, uint256 amount, uint256 nonce, uint256 expiry)
-        internal
-        view
-        returns (bytes memory)
-    {
-        bytes32 structHash = keccak256(abi.encode(staking.STAKE_TYPEHASH(), user, amount, nonce, expiry));
-        bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
-        return abi.encodePacked(r, s, v);
     }
 
     function _logPosition(string memory label, address user) internal view {
@@ -299,32 +253,6 @@ contract RNBWStakingSimulation is Test {
         console.log("=== INVARIANT HOLDS: totalShares==0 => totalPooledRnbw==0 ===");
     }
 
-    function test_Simulation_StakeViaRelayer() public {
-        console.log("");
-        console.log("=== STAKE VIA RELAYER (stakeWithSignature) ===");
-
-        uint256 amount = 10_000 ether;
-        uint256 nonce = 100;
-        uint256 expiry = block.timestamp + 60;
-        bytes memory sig = _signStake(alice, amount, nonce, expiry);
-
-        vm.prank(alice);
-        rnbwToken.approve(address(staking), amount);
-
-        address relayer = makeAddr("relayer");
-        vm.prank(relayer);
-        staking.stakeWithSignature(alice, amount, nonce, expiry, sig);
-
-        (uint256 staked,,,) = staking.getPosition(alice);
-        console.log("Relayer submitted stakeWithSignature for Alice");
-        console.log("Alice staked:", staked / 1e18);
-        console.log("Relayer address:", relayer);
-        console.log("=== RELAYER STAKE COMPLETE ===");
-
-        assertEq(staked, amount);
-        assertEq(staking.shares(alice), amount);
-    }
-
     function test_Simulation_CashbackMintsSharesDirectly() public {
         console.log("");
         console.log("=== CASHBACK MINTS SHARES DIRECTLY ===");
@@ -387,24 +315,27 @@ contract RNBWStakingSimulation is Test {
         console.log("=== NONCE REPLAY PREVENTION ===");
 
         vm.startPrank(alice);
-        rnbwToken.approve(address(staking), 20_000 ether);
+        rnbwToken.approve(address(staking), 10_000 ether);
         staking.stake(10_000 ether);
         vm.stopPrank();
 
         uint256 nonce = 999;
         uint256 expiry = block.timestamp + 60;
 
-        bytes32 structHash = keccak256(abi.encode(staking.UNSTAKE_TYPEHASH(), alice, 5000 ether, nonce, expiry));
+        rnbwToken.mint(address(staking), 1000 ether);
+
+        bytes32 structHash =
+            keccak256(abi.encode(staking.ALLOCATE_CASHBACK_TYPEHASH(), alice, 500 ether, nonce, expiry));
         bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
         bytes memory sig = abi.encodePacked(r, s, v);
 
-        staking.unstakeWithSignature(alice, 5000 ether, nonce, expiry, sig);
-        console.log("First unstake succeeded with nonce:", nonce);
+        staking.allocateCashbackWithSignature(alice, 500 ether, nonce, expiry, sig);
+        console.log("First cashback succeeded with nonce:", nonce);
         assertTrue(staking.isNonceUsed(alice, nonce));
 
         vm.expectRevert(IRNBWStaking.NonceAlreadyUsed.selector);
-        staking.unstakeWithSignature(alice, 5000 ether, nonce, expiry, sig);
+        staking.allocateCashbackWithSignature(alice, 500 ether, nonce, expiry, sig);
         console.log("Replay reverted as expected");
         console.log("=== REPLAY PREVENTION VERIFIED ===");
     }
@@ -418,10 +349,13 @@ contract RNBWStakingSimulation is Test {
         staking.stake(10_000 ether);
         vm.stopPrank();
 
+        rnbwToken.mint(address(staking), 500 ether);
+
         uint256 nonce = 500;
         uint256 expiry = block.timestamp + 60;
 
-        bytes32 structHash = keccak256(abi.encode(staking.UNSTAKE_TYPEHASH(), alice, 5000 ether, nonce, expiry));
+        bytes32 structHash =
+            keccak256(abi.encode(staking.ALLOCATE_CASHBACK_TYPEHASH(), alice, 500 ether, nonce, expiry));
         bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
         bytes memory sig = abi.encodePacked(r, s, v);
@@ -429,7 +363,7 @@ contract RNBWStakingSimulation is Test {
         vm.warp(expiry + 1);
 
         vm.expectRevert(IRNBWStaking.SignatureExpired.selector);
-        staking.unstakeWithSignature(alice, 5000 ether, nonce, expiry, sig);
+        staking.allocateCashbackWithSignature(alice, 500 ether, nonce, expiry, sig);
         console.log("Expired signature correctly reverted");
         console.log("=== EXPIRY CHECK VERIFIED ===");
     }
@@ -500,34 +434,5 @@ contract RNBWStakingSimulation is Test {
         assertGt(rateAfter, rateBefore);
         assertGt(aliceVal, 40_000 ether);
         assertGt(bobVal, 30_000 ether);
-    }
-
-    function test_Simulation_SharedNonceNamespace() public {
-        console.log("");
-        console.log("=== SHARED NONCE NAMESPACE ===");
-
-        vm.startPrank(alice);
-        rnbwToken.approve(address(staking), 20_000 ether);
-        staking.stake(10_000 ether);
-        vm.stopPrank();
-
-        uint256 nonce = 42;
-        uint256 expiry = block.timestamp + 60;
-        bytes memory stakeSig = _signStake(alice, 5000 ether, nonce, expiry);
-
-        vm.prank(alice);
-        rnbwToken.approve(address(staking), 5000 ether);
-        staking.stakeWithSignature(alice, 5000 ether, nonce, expiry, stakeSig);
-        console.log("stakeWithSignature used nonce 42");
-
-        bytes32 structHash = keccak256(abi.encode(staking.UNSTAKE_TYPEHASH(), alice, 1000 ether, nonce, expiry));
-        bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
-        bytes memory unstakeSig = abi.encodePacked(r, s, v);
-
-        vm.expectRevert(IRNBWStaking.NonceAlreadyUsed.selector);
-        staking.unstakeWithSignature(alice, 1000 ether, nonce, expiry, unstakeSig);
-        console.log("unstakeWithSignature with same nonce 42 reverted");
-        console.log("=== SHARED NAMESPACE CONFIRMED ===");
     }
 }

@@ -37,10 +37,6 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public constant MAX_MIN_STAKE_AMOUNT = 1_000_000e18; // Upper bound for minStakeAmount
     uint256 public constant MAX_SIGNERS = 3; // Maximum number of trusted signers
 
-    bytes32 public constant STAKE_TYPEHASH =
-        keccak256("Stake(address user,uint256 amount,uint256 nonce,uint256 expiry)");
-    bytes32 public constant UNSTAKE_TYPEHASH =
-        keccak256("Unstake(address user,uint256 amount,uint256 nonce,uint256 expiry)");
     bytes32 public constant ALLOCATE_CASHBACK_TYPEHASH =
         keccak256("AllocateCashback(address user,uint256 rnbwCashback,uint256 nonce,uint256 expiry)");
 
@@ -59,8 +55,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public totalPooledRnbw;
 
     mapping(address user => UserMeta meta) public userMeta;
-    /// @dev Nonces are shared across all signature-based operations (stake, unstake, cashback).
-    /// A nonce used by one operation cannot be reused by another, even for a different action type.
+    /// @dev Nonces for signature-based cashback allocation (prevents replay attacks).
     mapping(address user => mapping(uint256 nonce => bool used)) public usedNonces;
     mapping(address signer => bool trusted) internal _trustedSigners;
     uint256 public trustedSignerCount;
@@ -110,32 +105,6 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @inheritdoc IRNBWStaking
     function unstake(uint256 sharesToBurn) external nonReentrant whenNotPaused {
         _unstake(msg.sender, sharesToBurn);
-    }
-
-    /// @inheritdoc IRNBWStaking
-    function stakeWithSignature(address user, uint256 amount, uint256 nonce, uint256 expiry, bytes calldata signature)
-        external
-        nonReentrant
-        whenNotPaused
-    {
-        _validateSignature(
-            user, nonce, expiry, keccak256(abi.encode(STAKE_TYPEHASH, user, amount, nonce, expiry)), signature
-        );
-        _stake(user, amount);
-    }
-
-    /// @inheritdoc IRNBWStaking
-    function unstakeWithSignature(
-        address user,
-        uint256 sharesToBurn,
-        uint256 nonce,
-        uint256 expiry,
-        bytes calldata signature
-    ) external nonReentrant whenNotPaused {
-        _validateSignature(
-            user, nonce, expiry, keccak256(abi.encode(UNSTAKE_TYPEHASH, user, sharesToBurn, nonce, expiry)), signature
-        );
-        _unstake(user, sharesToBurn);
     }
 
     /// @inheritdoc IRNBWStaking
