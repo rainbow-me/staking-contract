@@ -555,4 +555,67 @@ contract RNBWStakingTest is Test {
 
         assertGt(staking.shares(bob), 0);
     }
+
+    function test_BatchAllocateCashback() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(30 ether);
+
+        uint256 expiry = block.timestamp + 60;
+
+        address[] memory users = new address[](2);
+        users[0] = alice;
+        users[1] = bob;
+
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 10 ether;
+        amounts[1] = 20 ether;
+
+        uint256[] memory nonces = new uint256[](2);
+        nonces[0] = 1;
+        nonces[1] = 2;
+
+        uint256[] memory expiries = new uint256[](2);
+        expiries[0] = expiry;
+        expiries[1] = expiry;
+
+        bytes[] memory sigs = new bytes[](2);
+        sigs[0] = _signAllocateCashback(alice, 10 ether, 1, expiry);
+        sigs[1] = _signAllocateCashback(bob, 20 ether, 2, expiry);
+
+        staking.batchAllocateCashbackWithSignature(users, amounts, nonces, expiries, sigs);
+
+        assertEq(staking.totalPooledRnbw(), 230 ether);
+        assertEq(staking.cashbackReserve(), 0);
+    }
+
+    function test_BatchAllocateCashbackRevertBatchTooLarge() public {
+        address[] memory users = new address[](51);
+        uint256[] memory amounts = new uint256[](51);
+        uint256[] memory nonces = new uint256[](51);
+        uint256[] memory expiries = new uint256[](51);
+        bytes[] memory sigs = new bytes[](51);
+
+        vm.expectRevert(IRNBWStaking.BatchTooLarge.selector);
+        staking.batchAllocateCashbackWithSignature(users, amounts, nonces, expiries, sigs);
+    }
+
+    function test_BatchAllocateCashbackRevertArrayLengthMismatch() public {
+        address[] memory users = new address[](2);
+        uint256[] memory amounts = new uint256[](1);
+        uint256[] memory nonces = new uint256[](2);
+        uint256[] memory expiries = new uint256[](2);
+        bytes[] memory sigs = new bytes[](2);
+
+        vm.expectRevert(IRNBWStaking.ArrayLengthMismatch.selector);
+        staking.batchAllocateCashbackWithSignature(users, amounts, nonces, expiries, sigs);
+    }
 }

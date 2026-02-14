@@ -7,8 +7,8 @@ import {RNBWStaking} from "../src/RNBWStaking.sol";
 contract DeployScript is Script {
     function run() external returns (RNBWStaking) {
         address rnbwToken = vm.envAddress("RNBW_TOKEN");
-        address admin = vm.envAddress("ADMIN");
-        address initialSigner = vm.envAddress("INITIAL_SIGNER");
+        address admin = vm.envAddress("SAFE_ADDRESS");
+        address initialSigner = vm.envAddress("SIGNER");
 
         vm.startBroadcast();
         RNBWStaking staking = new RNBWStaking(rnbwToken, admin, initialSigner);

@@ -138,6 +138,12 @@ interface IRNBWStaking {
     /// @notice Thrown when a stake or cashback amount is too small to mint at least 1 share
     error ZeroSharesMinted();
 
+    /// @notice Thrown when batch array lengths do not match
+    error ArrayLengthMismatch();
+
+    /// @notice Thrown when batch size exceeds MAX_BATCH_SIZE
+    error BatchTooLarge();
+
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -162,6 +168,20 @@ interface IRNBWStaking {
         uint256 nonce,
         uint256 expiry,
         bytes calldata signature
+    ) external;
+
+    /// @notice Batch allocate cashback to multiple stakers in a single transaction
+    /// @param users Array of recipient staker addresses
+    /// @param rnbwCashbacks Array of RNBW cashback amounts
+    /// @param nonces Array of unique nonces for replay protection
+    /// @param expiries Array of signature expiry timestamps
+    /// @param signatures Array of EIP-712 signatures from trusted signers
+    function batchAllocateCashbackWithSignature(
+        address[] calldata users,
+        uint256[] calldata rnbwCashbacks,
+        uint256[] calldata nonces,
+        uint256[] calldata expiries,
+        bytes[] calldata signatures
     ) external;
 
     /*//////////////////////////////////////////////////////////////
