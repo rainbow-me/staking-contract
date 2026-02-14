@@ -19,7 +19,7 @@ import {IRNBWStaking} from "./interfaces/IRNBWStaking.sol";
  *      - Exit fees stay in pool, increasing exchange rate for all stakers
  *      - No batch distribution needed - O(1) gas for any number of stakers
  *
- *      Tier configuration is managed off-chain.
+ *      Cashback configuration is managed off-chain.
  *      Staked positions are NOT transferable (locked staking).
  * @custom:security-contact security@rainbow.me
  */
@@ -34,14 +34,12 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public constant BASIS_POINTS = 10_000; // 100% in basis points
     uint256 public constant MIN_EXIT_FEE_BPS = 100; // 1% minimum exit fee
     uint256 public constant MAX_EXIT_FEE_BPS = 7500; // 75% maximum exit fee
+    uint256 public constant MIN_STAKE_FLOOR = 1e18; // 1 RNBW minimum floor for minStakeAmount
     uint256 public constant MAX_MIN_STAKE_AMOUNT = 1_000_000e18; // Upper bound for minStakeAmount
     uint256 public constant MAX_SIGNERS = 3; // Maximum number of trusted signers
+    uint256 public constant MINIMUM_SHARES = 1000;
+    address public constant DEAD_ADDRESS = address(0xdead);
 
-    bytes32 public constant STAKE_TYPEHASH =
-        keccak256("Stake(address user,uint256 amount,uint256 nonce,uint256 expiry)");
-    bytes32 public constant UNSTAKE_TYPEHASH =
-        keccak256("Unstake(address user,uint256 amount,uint256 nonce,uint256 expiry)");
-    bytes32 public constant COMPOUND_TYPEHASH = keccak256("Compound(address user,uint256 nonce,uint256 expiry)");
     bytes32 public constant ALLOCATE_CASHBACK_TYPEHASH =
         keccak256("AllocateCashback(address user,uint256 rnbwCashback,uint256 nonce,uint256 expiry)");
 
@@ -58,11 +56,10 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     mapping(address user => uint256 shareBalance) public shares;
     uint256 public totalShares;
     uint256 public totalPooledRnbw;
-    uint256 public totalAllocatedCashback;
+    uint256 public cashbackReserve;
 
     mapping(address user => UserMeta meta) public userMeta;
-    /// @dev Nonces are shared across all signature-based operations (stake, unstake, compound, cashback).
-    /// A nonce used by one operation cannot be reused by another, even for a different action type.
+    /// @dev Nonces for signature-based cashback allocation (prevents replay attacks).
     mapping(address user => mapping(uint256 nonce => bool used)) public usedNonces;
     mapping(address signer => bool trusted) internal _trustedSigners;
     uint256 public trustedSignerCount;
@@ -71,6 +68,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
+    /// @param _rnbwToken The RNBW ERC20 token address
+    /// @param _safe The admin multisig (Safe) address
+    /// @param _initialSigner The first trusted EIP-712 signer for cashback operations
     constructor(address _rnbwToken, address _safe, address _initialSigner) EIP712("RNBWStaking", "1") {
         if (_rnbwToken == address(0)) revert ZeroAddress();
         if (_safe == address(0)) revert ZeroAddress();
@@ -115,47 +115,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @inheritdoc IRNBWStaking
-    function stakeWithSignature(address user, uint256 amount, uint256 nonce, uint256 expiry, bytes calldata signature)
-        external
-        nonReentrant
-        whenNotPaused
-    {
-        _validateSignature(
-            user, nonce, expiry, keccak256(abi.encode(STAKE_TYPEHASH, user, amount, nonce, expiry)), signature
-        );
-        _stake(user, amount);
-    }
-
-    /// @inheritdoc IRNBWStaking
-    function unstakeWithSignature(
-        address user,
-        uint256 sharesToBurn,
-        uint256 nonce,
-        uint256 expiry,
-        bytes calldata signature
-    ) external nonReentrant whenNotPaused {
-        _validateSignature(
-            user, nonce, expiry, keccak256(abi.encode(UNSTAKE_TYPEHASH, user, sharesToBurn, nonce, expiry)), signature
-        );
-        _unstake(user, sharesToBurn);
-    }
-
-    /// @inheritdoc IRNBWStaking
-    function compoundWithSignature(address user, uint256 nonce, uint256 expiry, bytes calldata signature)
-        external
-        nonReentrant
-        whenNotPaused
-    {
-        _validateSignature(
-            user, nonce, expiry, keccak256(abi.encode(COMPOUND_TYPEHASH, user, nonce, expiry)), signature
-        );
-
-        uint256 compounded = _compoundCashback(user);
-        if (compounded == 0) revert NothingToCompound();
-    }
-
-    /// @inheritdoc IRNBWStaking
-    /// @dev Contract must be pre-funded with RNBW for cashback rewards
+    /// @dev Contract must be pre-funded with RNBW via depositCashbackRewards().
+    ///      Cashback is converted to shares immediately in a single step.
     function allocateCashbackWithSignature(
         address user,
         uint256 rnbwCashback,
@@ -174,24 +135,6 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         _allocateCashback(user, rnbwCashback);
     }
 
-    /// @dev Allocates cashback RNBW to user's pending balance
-    /// Cashback is compounded into shares on next stake/unstake/compound action
-    /// Contract must be pre-funded with sufficient RNBW for cashback rewards
-    function _allocateCashback(address user, uint256 rnbwCashback) internal {
-        if (shares[user] == 0) revert NoStakePosition();
-
-        uint256 requiredBalance = totalPooledRnbw + totalAllocatedCashback + rnbwCashback;
-        if (RNBW_TOKEN.balanceOf(address(this)) < requiredBalance) {
-            revert InsufficientCashbackBalance();
-        }
-
-        totalAllocatedCashback += rnbwCashback;
-        userMeta[user].cashbackAllocated += rnbwCashback;
-        userMeta[user].lastUpdateTime = block.timestamp;
-
-        emit CashbackAllocated(user, rnbwCashback);
-    }
-
     /*//////////////////////////////////////////////////////////////
                             VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -200,22 +143,10 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function getPosition(address user)
         external
         view
-        returns (
-            uint256 stakedAmount,
-            uint256 userShares,
-            uint256 cashbackAllocated,
-            uint256 lastUpdateTime,
-            uint256 stakingStartTime
-        )
+        returns (uint256 stakedAmount, uint256 userShares, uint256 lastUpdateTime, uint256 stakingStartTime)
     {
         UserMeta memory meta = userMeta[user];
-        return (
-            getRnbwForShares(shares[user]),
-            shares[user],
-            meta.cashbackAllocated,
-            meta.lastUpdateTime,
-            meta.stakingStartTime
-        );
+        return (getRnbwForShares(shares[user]), shares[user], meta.lastUpdateTime, meta.stakingStartTime);
     }
 
     /// @inheritdoc IRNBWStaking
@@ -289,9 +220,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @inheritdoc IRNBWStaking
     function emergencyWithdraw(address token, uint256 amount) external onlySafe {
         if (token == address(RNBW_TOKEN)) {
-            uint256 obligated = totalPooledRnbw + totalAllocatedCashback;
             uint256 balance = RNBW_TOKEN.balanceOf(address(this));
-            uint256 excess = balance > obligated ? balance - obligated : 0;
+            uint256 reserved = totalPooledRnbw + cashbackReserve;
+            uint256 excess = balance > reserved ? balance - reserved : 0;
             if (amount > excess) revert InsufficientExcess();
         }
         IERC20(token).safeTransfer(safe, amount);
@@ -318,11 +249,13 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function depositCashbackRewards(uint256 amount) external onlySafe {
         if (amount == 0) revert ZeroAmount();
         RNBW_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
+        cashbackReserve += amount;
         emit CashbackRewardsDeposited(msg.sender, amount);
     }
 
     /// @inheritdoc IRNBWStaking
     function setMinStakeAmount(uint256 newMinStakeAmount) external onlySafe {
+        if (newMinStakeAmount < MIN_STAKE_FLOOR) revert MinStakeTooLow();
         if (newMinStakeAmount > MAX_MIN_STAKE_AMOUNT) revert MinStakeTooHigh();
         if (newMinStakeAmount == minStakeAmount) revert NoChange();
         uint256 oldMinStakeAmount = minStakeAmount;
@@ -360,7 +293,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @dev Core staking logic
-    /// Flow: validate → compound pending cashback → transfer tokens → mint shares → update metadata
+    /// Flow: validate → transfer tokens → mint shares → update metadata
     function _stake(address user, uint256 amount) internal {
         // 1. Validate amount
         if (amount == 0) revert ZeroAmount();
@@ -368,22 +301,26 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             revert BelowMinimumStake();
         }
 
-        // 2. Auto-compound any pending cashback for THIS user before staking
-        //    This converts cashbackAllocated → shares at current exchange rate
-        _compoundCashback(user);
-
-        // 3. Transfer RNBW tokens from user to contract
+        // 2. Transfer RNBW tokens from user to contract
         RNBW_TOKEN.safeTransferFrom(user, address(this), amount);
 
-        // 4. Calculate shares to mint based on current exchange rate
+        // 3. Calculate shares to mint based on current exchange rate
         //    Formula: sharesToMint = (amount * totalShares) / totalPooledRnbw
         //    First staker: 1:1 ratio (shares = amount)
         uint256 sharesToMint;
         if (totalShares == 0) {
-            sharesToMint = amount;
+            sharesToMint = amount - MINIMUM_SHARES;
+            shares[DEAD_ADDRESS] += MINIMUM_SHARES;
+            totalShares += MINIMUM_SHARES;
         } else {
             sharesToMint = (amount * totalShares) / totalPooledRnbw;
         }
+
+        // 4. Prevent share inflation attack: if exchange rate is so high that
+        //    the deposit rounds to 0 shares, revert to protect the depositor.
+        //    Without this, the depositor's RNBW would be absorbed into the pool
+        //    with no shares minted, effectively donating to existing stakers.
+        if (sharesToMint == 0) revert ZeroSharesMinted();
 
         // 5. Update user's share balance and global totals
         shares[user] += sharesToMint;
@@ -403,7 +340,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @dev Core unstaking logic
-    /// Flow: validate → compound → calculate value & fee → burn shares → transfer net amount
+    /// Flow: validate → calculate value & fee → burn shares → transfer net amount
     /// Exit fee stays in pool, increasing exchange rate for remaining stakers
     function _unstake(address user, uint256 sharesToBurn) internal {
         // 1. Validate request
@@ -411,25 +348,22 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (shares[user] == 0) revert NoStakePosition();
         if (shares[user] < sharesToBurn) revert InsufficientShares();
 
-        // 2. Auto-compound any pending cashback for THIS user before unstaking
-        _compoundCashback(user);
-
-        // 3. Calculate RNBW value of shares at current exchange rate
+        // 2. Calculate RNBW value of shares at current exchange rate
         //    Formula: rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares
         uint256 rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares;
 
-        // 4. Calculate exit fee (e.g., 15% of value)
+        // 3. Calculate exit fee (e.g., 15% of value)
         uint256 exitFee = (rnbwValue * exitFeeBps) / BASIS_POINTS;
         uint256 netAmount = rnbwValue - exitFee;
 
-        // 5. Burn user's shares and update global totals
+        // 4. Burn user's shares and update global totals
         //    NOTE: Exit fee stays in pool (totalPooledRnbw only decreases by netAmount)
         //    This increases exchange rate for remaining stakers
         shares[user] -= sharesToBurn;
         totalShares -= sharesToBurn;
         totalPooledRnbw -= netAmount; // exitFee remains in pool!
 
-        // 6. Reset totalPooledRnbw when all shares are burned to prevent
+        // 5. Reset totalPooledRnbw when all shares are burned to prevent
         //    share inflation attack. Without this, orphaned exit-fee RNBW
         //    would remain in totalPooledRnbw while totalShares == 0.
         //    The next staker would hit the `totalShares == 0` branch (1:1 minting)
@@ -438,74 +372,70 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    represent. We sweep residual dust to the safe so the invariant
         //    `totalShares == 0 ⟹ totalPooledRnbw == 0` always holds.
         uint256 residual;
-        if (totalShares == 0 && totalPooledRnbw > 0) {
+        if (totalShares == MINIMUM_SHARES && totalPooledRnbw > 0) {
             residual = totalPooledRnbw;
             totalPooledRnbw = 0;
+            shares[DEAD_ADDRESS] = 0;
+            totalShares = 0;
         }
 
-        // 7. Update user metadata
+        // 6. Update user metadata
         UserMeta storage meta = userMeta[user];
         meta.lastUpdateTime = block.timestamp;
         if (shares[user] == 0) {
             meta.stakingStartTime = 0;
         }
 
-        // 8. Transfer net RNBW to user (after exit fee deduction)
+        // 7. Transfer net RNBW to user (after exit fee deduction)
         RNBW_TOKEN.safeTransfer(user, netAmount);
 
-        // 9. Sweep residual dust to safe (done after user transfer to keep
+        // 8. Sweep residual dust to safe (done after user transfer to keep
         //    reentrancy surface minimal and state fully settled first)
         if (residual > 0) {
             RNBW_TOKEN.safeTransfer(safe, residual);
         }
 
-        // 10. Emit events
+        // 9. Emit events
         emit Unstaked(user, sharesToBurn, rnbwValue, exitFee, netAmount);
         emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
     }
 
-    /// @dev Converts user's pending cashback into shares
-    /// Called automatically on stake/unstake, or manually via compoundWithSignature
-    /// Only affects THIS user's cashback - other users' cashback remains pending
-    function _compoundCashback(address user) internal returns (uint256) {
-        // 1. Read user's pending cashback
-        UserMeta storage meta = userMeta[user];
-        uint256 cashback = meta.cashbackAllocated;
+    /// @dev Allocates cashback by minting shares directly in one step.
+    ///      Contract must be pre-funded with RNBW via depositCashbackRewards().
+    ///      Reverts if cashback is too small to mint at least 1 share (backend should batch).
+    function _allocateCashback(address user, uint256 rnbwCashback) internal {
+        // 1. Validate
+        if (rnbwCashback == 0) revert ZeroAmount();
+        if (shares[user] == 0) revert NoStakePosition();
 
-        if (cashback > 0) {
-            // 2. Reset pending cashback to 0 and update global tracking
-            meta.cashbackAllocated = 0;
-            totalAllocatedCashback -= cashback;
-
-            // 3. Calculate shares to mint for this cashback amount
-            //    Uses same formula as staking
-            uint256 sharesToMint;
-            if (totalShares == 0) {
-                sharesToMint = cashback;
-            } else {
-                sharesToMint = (cashback * totalShares) / totalPooledRnbw;
-            }
-
-            // 4. If cashback is too small to mint shares at the current rate,
-            //    restore it so the user retains it for a future compound
-            //    without blocking stake/unstake operations
-            if (sharesToMint == 0) {
-                meta.cashbackAllocated = cashback;
-                totalAllocatedCashback += cashback;
-                return 0;
-            }
-
-            // 5. Mint shares to user and update global totals
-            //    NOTE: No token transfer needed - RNBW is pre-funded in contract
-            shares[user] += sharesToMint;
-            totalShares += sharesToMint;
-            totalPooledRnbw += cashback;
-
-            // 6. Emit events
-            emit CashbackCompounded(user, cashback, sharesToMint);
-            emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
+        // 2. Verify cashback reserve has enough RNBW to cover this allocation
+        if (rnbwCashback > cashbackReserve) {
+            revert InsufficientCashbackBalance();
         }
 
-        return cashback;
+        // 3. Calculate shares to mint at the current exchange rate
+        uint256 sharesToMint;
+        if (totalShares == 0) {
+            sharesToMint = rnbwCashback;
+        } else {
+            sharesToMint = (rnbwCashback * totalShares) / totalPooledRnbw;
+        }
+
+        // 4. Revert if cashback is too small to mint shares — backend should
+        //    batch small amounts or retry when the exchange rate is more favorable
+        if (sharesToMint == 0) revert ZeroSharesMinted();
+
+        // 5. Mint shares and move cashback RNBW from reserve into the pool
+        shares[user] += sharesToMint;
+        totalShares += sharesToMint;
+        totalPooledRnbw += rnbwCashback;
+        cashbackReserve -= rnbwCashback;
+
+        // 6. Update metadata
+        userMeta[user].lastUpdateTime = block.timestamp;
+
+        // 7. Emit events
+        emit CashbackAllocated(user, rnbwCashback, sharesToMint);
+        emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
     }
 }
