@@ -111,7 +111,11 @@ contract RNBWStakingSimulation is Test {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
         bytes memory sig = abi.encodePacked(r, s, v);
 
-        rnbwToken.mint(address(staking), amount);
+        rnbwToken.mint(admin, amount);
+        vm.startPrank(admin);
+        rnbwToken.approve(address(staking), amount);
+        staking.depositCashbackRewards(amount);
+        vm.stopPrank();
         staking.allocateCashbackWithSignature(user, amount, allocateNonce, expiry, sig);
         allocateNonce++;
     }
@@ -302,7 +306,11 @@ contract RNBWStakingSimulation is Test {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
         bytes memory sig = abi.encodePacked(r, s, v);
 
-        rnbwToken.mint(address(staking), 1);
+        rnbwToken.mint(admin, 1);
+        vm.startPrank(admin);
+        rnbwToken.approve(address(staking), 1);
+        staking.depositCashbackRewards(1);
+        vm.stopPrank();
 
         vm.expectRevert(IRNBWStaking.ZeroSharesMinted.selector);
         staking.allocateCashbackWithSignature(alice, 1, allocateNonce, expiry, sig);
@@ -323,7 +331,11 @@ contract RNBWStakingSimulation is Test {
         uint256 nonce = 999;
         uint256 expiry = block.timestamp + 60;
 
-        rnbwToken.mint(address(staking), 1000 ether);
+        rnbwToken.mint(admin, 1000 ether);
+        vm.startPrank(admin);
+        rnbwToken.approve(address(staking), 1000 ether);
+        staking.depositCashbackRewards(1000 ether);
+        vm.stopPrank();
 
         bytes32 structHash =
             keccak256(abi.encode(staking.ALLOCATE_CASHBACK_TYPEHASH(), alice, 500 ether, nonce, expiry));
@@ -350,7 +362,11 @@ contract RNBWStakingSimulation is Test {
         staking.stake(10_000 ether);
         vm.stopPrank();
 
-        rnbwToken.mint(address(staking), 500 ether);
+        rnbwToken.mint(admin, 500 ether);
+        vm.startPrank(admin);
+        rnbwToken.approve(address(staking), 500 ether);
+        staking.depositCashbackRewards(500 ether);
+        vm.stopPrank();
 
         uint256 nonce = 500;
         uint256 expiry = block.timestamp + 60;

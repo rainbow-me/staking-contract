@@ -42,6 +42,14 @@ contract RNBWStakingTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
+    function _depositCashback(uint256 amount) internal {
+        rnbwToken.mint(admin, amount);
+        vm.startPrank(admin);
+        rnbwToken.approve(address(staking), amount);
+        staking.depositCashbackRewards(amount);
+        vm.stopPrank();
+    }
+
     function test_Deployment() public view {
         assertEq(address(staking.RNBW_TOKEN()), address(rnbwToken));
         assertEq(staking.safe(), admin);
@@ -187,7 +195,7 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         vm.stopPrank();
 
-        rnbwToken.mint(address(staking), 10 ether);
+        _depositCashback(10 ether);
 
         uint256 nonce = 1;
         uint256 expiry = block.timestamp + 60;
@@ -203,7 +211,7 @@ contract RNBWStakingTest is Test {
     }
 
     function test_AllocateCashbackRevertNoPosition() public {
-        rnbwToken.mint(address(staking), 10 ether);
+        _depositCashback(10 ether);
 
         uint256 nonce = 1;
         uint256 expiry = block.timestamp + 60;
@@ -381,6 +389,25 @@ contract RNBWStakingTest is Test {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.InsufficientExcess.selector);
         staking.emergencyWithdraw(address(rnbwToken), 1 ether);
+    }
+
+    function test_EmergencyWithdrawCannotDrainCashbackReserve() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(50 ether);
+
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.InsufficientExcess.selector);
+        staking.emergencyWithdraw(address(rnbwToken), 1 ether);
+
+        rnbwToken.mint(address(staking), 10 ether);
+
+        vm.prank(admin);
+        staking.emergencyWithdraw(address(rnbwToken), 10 ether);
+        assertEq(staking.cashbackReserve(), 50 ether);
     }
 
     function test_SetSafe() public {

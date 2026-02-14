@@ -55,6 +55,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     mapping(address user => uint256 shareBalance) public shares;
     uint256 public totalShares;
     uint256 public totalPooledRnbw;
+    uint256 public cashbackReserve;
 
     mapping(address user => UserMeta meta) public userMeta;
     /// @dev Nonces for signature-based cashback allocation (prevents replay attacks).
@@ -216,7 +217,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function emergencyWithdraw(address token, uint256 amount) external onlySafe {
         if (token == address(RNBW_TOKEN)) {
             uint256 balance = RNBW_TOKEN.balanceOf(address(this));
-            uint256 excess = balance > totalPooledRnbw ? balance - totalPooledRnbw : 0;
+            uint256 reserved = totalPooledRnbw + cashbackReserve;
+            uint256 excess = balance > reserved ? balance - reserved : 0;
             if (amount > excess) revert InsufficientExcess();
         }
         IERC20(token).safeTransfer(safe, amount);
@@ -243,6 +245,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function depositCashbackRewards(uint256 amount) external onlySafe {
         if (amount == 0) revert ZeroAmount();
         RNBW_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
+        cashbackReserve += amount;
         emit CashbackRewardsDeposited(msg.sender, amount);
     }
 
@@ -400,9 +403,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (rnbwCashback == 0) revert ZeroAmount();
         if (shares[user] == 0) revert NoStakePosition();
 
-        // 2. Verify contract has enough RNBW to cover this cashback
-        uint256 requiredBalance = totalPooledRnbw + rnbwCashback;
-        if (RNBW_TOKEN.balanceOf(address(this)) < requiredBalance) {
+        // 2. Verify cashback reserve has enough RNBW to cover this allocation
+        if (rnbwCashback > cashbackReserve) {
             revert InsufficientCashbackBalance();
         }
 
@@ -418,10 +420,11 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    batch small amounts or retry when the exchange rate is more favorable
         if (sharesToMint == 0) revert ZeroSharesMinted();
 
-        // 5. Mint shares and add cashback RNBW to the pool
+        // 5. Mint shares and move cashback RNBW from reserve into the pool
         shares[user] += sharesToMint;
         totalShares += sharesToMint;
         totalPooledRnbw += rnbwCashback;
+        cashbackReserve -= rnbwCashback;
 
         // 6. Update metadata
         userMeta[user].lastUpdateTime = block.timestamp;
