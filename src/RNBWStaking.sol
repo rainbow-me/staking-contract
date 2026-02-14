@@ -19,7 +19,7 @@ import {IRNBWStaking} from "./interfaces/IRNBWStaking.sol";
  *      - Exit fees stay in pool, increasing exchange rate for all stakers
  *      - No batch distribution needed - O(1) gas for any number of stakers
  *
- *      Tier configuration is managed off-chain.
+ *      Cashback configuration is managed off-chain.
  *      Staked positions are NOT transferable (locked staking).
  * @custom:security-contact security@rainbow.me
  */
@@ -34,6 +34,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public constant BASIS_POINTS = 10_000; // 100% in basis points
     uint256 public constant MIN_EXIT_FEE_BPS = 100; // 1% minimum exit fee
     uint256 public constant MAX_EXIT_FEE_BPS = 7500; // 75% maximum exit fee
+    uint256 public constant MIN_STAKE_FLOOR = 1e18; // 1 RNBW minimum floor for minStakeAmount
     uint256 public constant MAX_MIN_STAKE_AMOUNT = 1_000_000e18; // Upper bound for minStakeAmount
     uint256 public constant MAX_SIGNERS = 3; // Maximum number of trusted signers
     uint256 public constant MINIMUM_SHARES = 1000;
@@ -67,6 +68,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
+    /// @param _rnbwToken The RNBW ERC20 token address
+    /// @param _safe The admin multisig (Safe) address
+    /// @param _initialSigner The first trusted EIP-712 signer for cashback operations
     constructor(address _rnbwToken, address _safe, address _initialSigner) EIP712("RNBWStaking", "1") {
         if (_rnbwToken == address(0)) revert ZeroAddress();
         if (_safe == address(0)) revert ZeroAddress();
@@ -251,6 +255,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function setMinStakeAmount(uint256 newMinStakeAmount) external onlySafe {
+        if (newMinStakeAmount < MIN_STAKE_FLOOR) revert MinStakeTooLow();
         if (newMinStakeAmount > MAX_MIN_STAKE_AMOUNT) revert MinStakeTooHigh();
         if (newMinStakeAmount == minStakeAmount) revert NoChange();
         uint256 oldMinStakeAmount = minStakeAmount;
