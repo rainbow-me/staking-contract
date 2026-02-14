@@ -500,6 +500,12 @@ contract RNBWStakingTest is Test {
         staking.setMinStakeAmount(1 ether);
     }
 
+    function test_SetMinStakeAmountRevertTooLow() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.MinStakeTooLow.selector);
+        staking.setMinStakeAmount(0.5 ether);
+    }
+
     function test_SetMinStakeAmountRevertTooHigh() public {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.MinStakeTooHigh.selector);
