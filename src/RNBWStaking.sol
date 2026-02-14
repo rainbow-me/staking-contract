@@ -7,6 +7,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {IRNBWStaking} from "./interfaces/IRNBWStaking.sol";
 
@@ -37,6 +38,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public constant MIN_STAKE_FLOOR = 1e18; // 1 RNBW minimum floor for minStakeAmount
     uint256 public constant MAX_MIN_STAKE_AMOUNT = 1_000_000e18; // Upper bound for minStakeAmount
     uint256 public constant MAX_SIGNERS = 3; // Maximum number of trusted signers
+    uint256 public constant MAX_BATCH_SIZE = 50;
     uint256 public constant MINIMUM_SHARES = 1000;
     address public constant DEAD_ADDRESS = address(0xdead);
 
@@ -124,15 +126,35 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         uint256 expiry,
         bytes calldata signature
     ) external nonReentrant whenNotPaused {
-        _validateSignature(
-            user,
-            nonce,
-            expiry,
-            keccak256(abi.encode(ALLOCATE_CASHBACK_TYPEHASH, user, rnbwCashback, nonce, expiry)),
-            signature
-        );
+        _validateAndAllocateCashback(user, rnbwCashback, nonce, expiry, signature);
+    }
 
-        _allocateCashback(user, rnbwCashback);
+    /// @inheritdoc IRNBWStaking
+    function batchAllocateCashbackWithSignature(
+        address[] calldata users,
+        uint256[] calldata rnbwCashbacks,
+        uint256[] calldata nonces,
+        uint256[] calldata expiries,
+        bytes[] calldata signatures
+    ) external nonReentrant whenNotPaused {
+        uint256 len = users.length;
+        if (len > MAX_BATCH_SIZE) revert BatchTooLarge();
+        if (
+            len != rnbwCashbacks.length || len != nonces.length || len != expiries.length
+                || len != signatures.length
+        ) {
+            revert ArrayLengthMismatch();
+        }
+
+        uint256 totalCashback;
+        for (uint256 i; i < len; ++i) {
+            totalCashback += rnbwCashbacks[i];
+        }
+        if (totalCashback > cashbackReserve) revert InsufficientCashbackBalance();
+
+        for (uint256 i; i < len; ++i) {
+            _validateAndAllocateCashback(users[i], rnbwCashbacks[i], nonces[i], expiries[i], signatures[i]);
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -267,6 +289,24 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
                            INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
+    /// @dev Validates signature and allocates cashback in one call (avoids stack-too-deep in batch)
+    function _validateAndAllocateCashback(
+        address user,
+        uint256 rnbwCashback,
+        uint256 nonce,
+        uint256 expiry,
+        bytes calldata signature
+    ) internal {
+        _validateSignature(
+            user,
+            nonce,
+            expiry,
+            keccak256(abi.encode(ALLOCATE_CASHBACK_TYPEHASH, user, rnbwCashback, nonce, expiry)),
+            signature
+        );
+        _allocateCashback(user, rnbwCashback);
+    }
+
     /// @dev Validates EIP-712 signature for relayer operations
     function _validateSignature(
         address user,
@@ -353,7 +393,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         uint256 rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares;
 
         // 3. Calculate exit fee (e.g., 15% of value)
-        uint256 exitFee = (rnbwValue * exitFeeBps) / BASIS_POINTS;
+        //    Rounds up to ensure fractional wei always favors the protocol
+        //    (user pays at most 1 wei more, protocol is never short-changed).
+        uint256 exitFee = Math.mulDiv(rnbwValue, exitFeeBps, BASIS_POINTS, Math.Rounding.Ceil);
         uint256 netAmount = rnbwValue - exitFee;
 
         // 4. Burn user's shares and update global totals
