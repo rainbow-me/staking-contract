@@ -36,6 +36,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public constant MAX_EXIT_FEE_BPS = 7500; // 75% maximum exit fee
     uint256 public constant MAX_MIN_STAKE_AMOUNT = 1_000_000e18; // Upper bound for minStakeAmount
     uint256 public constant MAX_SIGNERS = 3; // Maximum number of trusted signers
+    uint256 public constant MINIMUM_SHARES = 1000;
+    address public constant DEAD_ADDRESS = address(0xdead);
 
     bytes32 public constant ALLOCATE_CASHBACK_TYPEHASH =
         keccak256("AllocateCashback(address user,uint256 rnbwCashback,uint256 nonce,uint256 expiry)");
@@ -299,7 +301,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    First staker: 1:1 ratio (shares = amount)
         uint256 sharesToMint;
         if (totalShares == 0) {
-            sharesToMint = amount;
+            sharesToMint = amount - MINIMUM_SHARES;
+            shares[DEAD_ADDRESS] += MINIMUM_SHARES;
+            totalShares += MINIMUM_SHARES;
         } else {
             sharesToMint = (amount * totalShares) / totalPooledRnbw;
         }
@@ -360,9 +364,11 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    represent. We sweep residual dust to the safe so the invariant
         //    `totalShares == 0 ⟹ totalPooledRnbw == 0` always holds.
         uint256 residual;
-        if (totalShares == 0 && totalPooledRnbw > 0) {
+        if (totalShares == MINIMUM_SHARES && totalPooledRnbw > 0) {
             residual = totalPooledRnbw;
             totalPooledRnbw = 0;
+            shares[DEAD_ADDRESS] = 0;
+            totalShares = 0;
         }
 
         // 6. Update user metadata
