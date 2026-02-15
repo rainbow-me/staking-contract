@@ -36,8 +36,9 @@ Both functions use `msg.sender`, so they work with any relay service that preser
 | Function | Caller | Description |
 |----------|--------|-------------|
 | `allocateCashbackWithSignature(user, rnbwCashback, nonce, expiry, sig)` | Anyone (signature validated) | Mint shares from pre-funded cashback reserve. Requires EIP-712 signature from a trusted signer. |
+| `batchAllocateCashbackWithSignature(users[], amounts[], nonces[], expiries[], sigs[])` | Anyone (signatures validated) | Batch version -- allocate cashback to multiple users in one transaction (max 50). |
 
-Any `msg.sender` can submit this transaction (relayer, bot, user). The contract validates the signature, not the caller.
+Any `msg.sender` can submit these transactions (relayer, bot, user). The contract validates the signature, not the caller.
 
 ### Admin Functions (Safe multisig only)
 
@@ -238,6 +239,41 @@ Each cashback allocation immediately increases Alice's shares. No separate compo
 | Shares (advanced) | `getPosition(user).userShares` |
 | Staking Since | `getPosition(user).stakingStartTime` |
 
+## Deployment
+
+### Environment Variables
+
+Copy the appropriate example file and fill in values:
+
+```shell
+cp .env.staging.example .env.staging    # for staging (Tenderly Virtual TestNet)
+cp .env.production.example .env.production  # for production (Base mainnet)
+```
+
+| Variable | Description |
+|----------|-------------|
+| `RPC_URL` | RPC endpoint (Tenderly for staging, `https://mainnet.base.org` for production) |
+| `PRIVATE_KEY` | Deployer wallet private key |
+| `ETHERSCAN_API_KEY` | Tenderly access token (staging) or Basescan API key (production) |
+| `RNBW_TOKEN` | RNBW ERC20 token contract address |
+| `SAFE_ADDRESS` | Admin multisig (Safe) address |
+| `SIGNER` | Initial trusted EIP-712 signer address for cashback operations |
+
+### Deploy
+
+```shell
+make deploy-staging       # deploy to Tenderly Virtual TestNet
+make deploy-production    # deploy to Base mainnet (confirmation prompt)
+```
+
+### Verify
+
+```shell
+make verify-staging ADDRESS=0x...     # verify on staging
+make verify-production ADDRESS=0x...  # verify on Basescan
+```
+
+
 ## Security Features
 
 - **Dead shares**: 1000 shares minted to `0xdead` on first deposit (prevents share inflation / first depositor attack)
@@ -245,6 +281,8 @@ Each cashback allocation immediately increases Alice's shares. No separate compo
 - **Min stake floor**: `minStakeAmount` cannot be set below 1 RNBW (prevents dust griefing)
 - **Inflation guard**: `ZeroSharesMinted` revert protects depositors from rounding attacks
 - **Residual sweep**: When only dead shares remain, orphaned exit fees are swept to safe and pool is reset
+- **Exit fee rounding**: Ceiling division (`Math.mulDiv` with `Rounding.Ceil`) ensures fractional wei always favors the protocol
+- **Batch size limit**: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve solvency check
 
 ## Build
 
@@ -258,7 +296,7 @@ forge build
 forge test
 ```
 
-60 tests across two suites: unit tests (`RNBWStaking.t.sol`) and simulation tests (`RNBWStakingSimulation.t.sol`).
+63 tests across two suites: unit tests (`RNBWStaking.t.sol`) and simulation tests (`RNBWStakingSimulation.t.sol`).
 
 ```shell
 forge test -vvv                                          # verbose output
