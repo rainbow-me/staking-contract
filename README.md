@@ -398,6 +398,19 @@ make verify-production ADDRESS=0x...  # verify on Basescan
 - **Dust unstake guard**: `ZeroUnstakeAmount` revert prevents ceil-rounded exit fee from consuming 100% of a dust unstake
 - **2-step safe transfer**: `proposeSafe()` + `acceptSafe()` prevents admin transfer to wrong address (same pattern as OpenZeppelin `Ownable2Step`)
 - **Batch size limit**: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve solvency check
+- **Rich error context**: User-facing errors include address and value params for debugging (see table below)
+
+### Custom Errors
+
+All user-facing errors include contextual parameters for off-chain debugging. Admin errors use bare selectors since `msg.sender` provides sufficient context.
+
+| Error | Parameters | Thrown in |
+|-------|-----------|-----------|
+| `NoStakePosition` | `(user)` | `_unstake`, `_allocateCashback` |
+| `InsufficientShares` | `(user, requested, available)` | `_unstake` |
+| `BelowMinimumStake` | `(user, amount, minRequired)` | `_stake` |
+| `ZeroSharesMinted` | `(user, amount)` | `_stake`, `_allocateCashback` |
+| `ZeroUnstakeAmount` | `(user, rnbwValue)` | `_unstake` |
 
 ### Dead Shares Lifecycle
 
