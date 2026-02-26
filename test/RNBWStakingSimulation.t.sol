@@ -55,7 +55,7 @@ contract RNBWStakingSimulation is Test {
 
         console.log("STEP 2: On-chain execution complete");
 
-        (uint256 staked, uint256 shares,,) = staking.getPosition(alice);
+        (uint256 staked, uint256 shares,,,,,,) = staking.getPosition(alice);
         console.log("Alice staked amount:", staked / 1e18);
         console.log("Alice shares:", shares / 1e18);
         console.log("Total pooled:", staking.totalPooledRnbw() / 1e18);
@@ -97,7 +97,7 @@ contract RNBWStakingSimulation is Test {
         _logPosition("After Additional Stake", alice);
         console.log("=== CASHBACK FLOW COMPLETE ===");
 
-        (uint256 stakedFinal,,,) = staking.getPosition(alice);
+        (uint256 stakedFinal,,,,,,,) = staking.getPosition(alice);
         assertApproxEqAbs(stakedFinal, 50_000 ether + 500 ether + 1250 ether + 1000 ether, staking.MINIMUM_SHARES());
     }
 
@@ -121,7 +121,16 @@ contract RNBWStakingSimulation is Test {
     }
 
     function _logPosition(string memory label, address user) internal view {
-        (uint256 staked, uint256 userShares, uint256 lastUpdate, uint256 stakingStart) = staking.getPosition(user);
+        (
+            uint256 staked,
+            uint256 userShares,
+            uint256 lastUpdate,
+            uint256 stakingStart,
+            uint256 cashbackReceived,
+            uint256 rnbwStaked,
+            uint256 rnbwUnstaked,
+            uint256 exitFeePaid
+        ) = staking.getPosition(user);
         console.log("---", label, "---");
         console.log("Staked RNBW:", staked / 1e18);
         console.log("Shares:", userShares / 1e18);
@@ -130,6 +139,10 @@ contract RNBWStakingSimulation is Test {
         console.log("Total shares:", staking.totalShares() / 1e18);
         console.log("Staking start:", stakingStart);
         console.log("Last update:", lastUpdate);
+        console.log("Lifetime cashback:", cashbackReceived / 1e18);
+        console.log("Lifetime staked:", rnbwStaked / 1e18);
+        console.log("Lifetime unstaked:", rnbwUnstaked / 1e18);
+        console.log("Lifetime exit fees:", exitFeePaid / 1e18);
         console.log("");
     }
 
@@ -150,14 +163,14 @@ contract RNBWStakingSimulation is Test {
         console.log("Bob staked: 50,000 RNBW");
         console.log("Total pooled:", staking.totalPooledRnbw() / 1e18);
 
-        (uint256 aliceBefore,,,) = staking.getPosition(alice);
+        (uint256 aliceBefore,,,,,,,) = staking.getPosition(alice);
         console.log("Alice value before Bob unstakes:", aliceBefore / 1e18);
 
         console.log("Bob unstakes all 50,000 shares...");
         vm.prank(bob);
         staking.unstake(50_000 ether);
 
-        (uint256 aliceAfter,,,) = staking.getPosition(alice);
+        (uint256 aliceAfter,,,,,,,) = staking.getPosition(alice);
         console.log("Alice value after Bob unstakes:", aliceAfter / 1e18);
         console.log("Alice gained:", (aliceAfter - aliceBefore) / 1e18);
         console.log("Exchange rate:", staking.getExchangeRate());
@@ -199,8 +212,8 @@ contract RNBWStakingSimulation is Test {
         staking.unstake(15_000 ether);
 
         console.log("PHASE 5: Final state");
-        (uint256 aliceFinal,,,) = staking.getPosition(alice);
-        (uint256 bobFinal,,,) = staking.getPosition(bob);
+        (uint256 aliceFinal,,,,,,,) = staking.getPosition(alice);
+        (uint256 bobFinal,,,,,,,) = staking.getPosition(bob);
         console.log("Alice final:", aliceFinal / 1e18);
         console.log("Bob final:", bobFinal / 1e18);
         console.log("Total pooled:", staking.totalPooledRnbw() / 1e18);
@@ -271,7 +284,7 @@ contract RNBWStakingSimulation is Test {
         _allocateCashback(alice, 2000 ether);
         uint256 sharesAfter = staking.shares(alice);
 
-        (uint256 stakedAfter,,,) = staking.getPosition(alice);
+        (uint256 stakedAfter,,,,,,,) = staking.getPosition(alice);
         console.log("Shares before cashback:", sharesBefore / 1e18);
         console.log("Shares after cashback:", sharesAfter / 1e18);
         console.log("Staked after cashback:", stakedAfter / 1e18);
@@ -442,8 +455,8 @@ contract RNBWStakingSimulation is Test {
         console.log("Exchange rate before:", rateBefore);
         console.log("Exchange rate after:", rateAfter);
 
-        (uint256 aliceVal,,,) = staking.getPosition(alice);
-        (uint256 bobVal,,,) = staking.getPosition(bob);
+        (uint256 aliceVal,,,,,,,) = staking.getPosition(alice);
+        (uint256 bobVal,,,,,,,) = staking.getPosition(bob);
         console.log("Alice value:", aliceVal / 1e18);
         console.log("Bob value:", bobVal / 1e18);
         console.log("=== FEE DISTRIBUTED PROPORTIONALLY ===");
