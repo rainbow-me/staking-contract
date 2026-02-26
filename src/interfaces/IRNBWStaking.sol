@@ -328,7 +328,7 @@ interface IRNBWStaking {
     /// @notice Accept the proposed safe address (step 2 of 2-step transfer, callable by pending safe only)
     function acceptSafe() external;
 
-    /// @notice Toggle whether partial unstake is allowed (default: true)
+    /// @notice Toggle whether partial unstake is allowed (default: false)
     /// @param allowed Whether to allow partial unstake
     function setAllowPartialUnstake(bool allowed) external;
 }
