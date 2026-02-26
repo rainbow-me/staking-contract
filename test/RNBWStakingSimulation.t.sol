@@ -6,6 +6,7 @@ import {RNBWStaking} from "../src/RNBWStaking.sol";
 import {IRNBWStaking} from "../src/interfaces/IRNBWStaking.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title RNBWStakingSimulation
@@ -520,11 +521,11 @@ contract RNBWStakingSimulation is Test {
         console.log("Exchange rate:", rateB);
         console.log("totalCashbackAllocated:", cashbackB / 1e18);
 
-        uint256 SECONDS_PER_YEAR = 365.25 days;
+        uint256 secondsPerYear = 365.25 days;
         uint256 elapsed = tsB - tsA;
 
-        uint256 exitFeeAprBps = ((rateB - rateA) * 10_000 * SECONDS_PER_YEAR) / (rateA * elapsed);
-        uint256 cashbackAprBps = ((cashbackB - cashbackA) * 10_000 * SECONDS_PER_YEAR) / (poolA * elapsed);
+        uint256 exitFeeAprBps = ((rateB - rateA) * 10_000 * secondsPerYear) / (rateA * elapsed);
+        uint256 cashbackAprBps = ((cashbackB - cashbackA) * 10_000 * secondsPerYear) / (poolA * elapsed);
         uint256 totalAprBps = exitFeeAprBps + cashbackAprBps;
 
         console.log("");
@@ -589,11 +590,14 @@ contract RNBWStakingSimulation is Test {
             uint256 exitFeePaid
         ) = staking.getPosition(alice);
 
-        int256 lifetimeEarnings =
-            int256(currentValue) + int256(totalUnstaked) - int256(totalStaked) + int256(cashbackReceived);
+        int256 iCurrentValue = SafeCast.toInt256(currentValue);
+        int256 iTotalUnstaked = SafeCast.toInt256(totalUnstaked);
+        int256 iTotalStaked = SafeCast.toInt256(totalStaked);
+        int256 iCashbackReceived = SafeCast.toInt256(cashbackReceived);
+        int256 iExitFeePaid = SafeCast.toInt256(exitFeePaid);
 
-        int256 exchangeRateGain = int256(currentValue) + int256(totalUnstaked) + int256(exitFeePaid)
-            - int256(totalStaked) - int256(cashbackReceived);
+        int256 lifetimeEarnings = iCurrentValue + iTotalUnstaked - iTotalStaked + iCashbackReceived;
+        int256 exchangeRateGain = iCurrentValue + iTotalUnstaked + iExitFeePaid - iTotalStaked - iCashbackReceived;
 
         console.log("");
         console.log("--- ALICE LIFETIME P&L ---");
@@ -605,15 +609,15 @@ contract RNBWStakingSimulation is Test {
         console.log("");
 
         if (lifetimeEarnings >= 0) {
-            console.log("Lifetime earnings:", uint256(lifetimeEarnings) / 1e18);
+            console.log("Lifetime earnings:", SafeCast.toUint256(lifetimeEarnings) / 1e18);
         } else {
-            console.log("Lifetime loss:", uint256(-lifetimeEarnings) / 1e18);
+            console.log("Lifetime loss:", SafeCast.toUint256(-lifetimeEarnings) / 1e18);
         }
 
         if (exchangeRateGain >= 0) {
-            console.log("Exchange rate gain:", uint256(exchangeRateGain) / 1e18);
+            console.log("Exchange rate gain:", SafeCast.toUint256(exchangeRateGain) / 1e18);
         } else {
-            console.log("Exchange rate loss:", uint256(-exchangeRateGain) / 1e18);
+            console.log("Exchange rate loss:", SafeCast.toUint256(-exchangeRateGain) / 1e18);
         }
 
         assertGt(lifetimeEarnings, 0);
