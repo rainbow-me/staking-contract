@@ -340,7 +340,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
         // 3. Recover signer from EIP-712 typed data hash
         bytes32 digest = _hashTypedDataV4(structHash);
-        address signer = ECDSA.recover(digest, signature);
+        address signer = digest.recover(signature);
 
         // 4. Verify signer is trusted
         if (!_trustedSigners[signer]) revert InvalidSignature();
@@ -415,6 +415,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    (user pays at most 1 wei more, protocol is never short-changed).
         uint256 exitFee = Math.mulDiv(rnbwValue, exitFeeBps, BASIS_POINTS, Math.Rounding.Ceil);
         uint256 netAmount = rnbwValue - exitFee;
+        if (netAmount == 0) revert ZeroUnstakeAmount();
 
         // 4. Burn user's shares and update global totals
         //    NOTE: Exit fee stays in pool (totalPooledRnbw only decreases by netAmount)

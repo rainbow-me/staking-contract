@@ -146,6 +146,9 @@ interface IRNBWStaking {
     /// @notice Thrown when a stake or cashback amount is too small to mint at least 1 share
     error ZeroSharesMinted();
 
+    /// @notice Thrown when ceil-rounded exit fee consumes entire unstake amount (dust protection)
+    error ZeroUnstakeAmount();
+
     /// @notice Thrown when batch array lengths do not match
     error ArrayLengthMismatch();
 
