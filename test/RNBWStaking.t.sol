@@ -638,7 +638,7 @@ contract RNBWStakingTest is Test {
         staking.unstake(aliceShares);
         vm.stopPrank();
 
-        (,,,,,uint256 totalStaked, uint256 totalUnstaked, uint256 totalFees) = staking.getPosition(alice);
+        (,,,,, uint256 totalStaked, uint256 totalUnstaked, uint256 totalFees) = staking.getPosition(alice);
         assertEq(totalStaked, 100 ether);
         assertGt(totalUnstaked, 0);
         assertGt(totalFees, 0);

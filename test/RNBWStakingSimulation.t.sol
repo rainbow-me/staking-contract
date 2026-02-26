@@ -502,7 +502,7 @@ contract RNBWStakingSimulation is Test {
 
         vm.warp(block.timestamp + 1 days);
 
-        _allocateCashback(alice, 2_000 ether);
+        _allocateCashback(alice, 2000 ether);
         console.log("Day 2: 2,000 RNBW cashback allocated to Alice");
 
         vm.warp(block.timestamp + 5 days);
@@ -559,7 +559,7 @@ contract RNBWStakingSimulation is Test {
 
         console.log("PHASE 1: Alice stakes 50k, Bob stakes 50k");
 
-        _allocateCashback(alice, 3_000 ether);
+        _allocateCashback(alice, 3000 ether);
         console.log("PHASE 2: 3,000 RNBW cashback to Alice");
 
         uint256 bobShares = staking.shares(bob);
@@ -579,8 +579,7 @@ contract RNBWStakingSimulation is Test {
         console.log("PHASE 5: Alice unstakes half her position");
 
         (
-            uint256 currentValue,
-            ,,,
+            uint256 currentValue,,,,
             uint256 cashbackReceived,
             uint256 totalStaked,
             uint256 totalUnstaked,
@@ -590,9 +589,8 @@ contract RNBWStakingSimulation is Test {
         int256 lifetimeEarnings =
             int256(currentValue) + int256(totalUnstaked) - int256(totalStaked) + int256(cashbackReceived);
 
-        int256 exchangeRateGain =
-            int256(currentValue) + int256(totalUnstaked) + int256(exitFeePaid) - int256(totalStaked)
-            - int256(cashbackReceived);
+        int256 exchangeRateGain = int256(currentValue) + int256(totalUnstaked) + int256(exitFeePaid)
+            - int256(totalStaked) - int256(cashbackReceived);
 
         console.log("");
         console.log("--- ALICE LIFETIME P&L ---");
@@ -617,7 +615,7 @@ contract RNBWStakingSimulation is Test {
 
         assertGt(lifetimeEarnings, 0);
         assertEq(totalStaked, 60_000 ether);
-        assertEq(cashbackReceived, 3_000 ether);
+        assertEq(cashbackReceived, 3000 ether);
         assertGt(totalUnstaked, 0);
         assertGt(exitFeePaid, 0);
 
