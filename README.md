@@ -239,6 +239,166 @@ Each cashback allocation immediately increases Alice's shares. No separate compo
 | Shares (advanced) | `getPosition(user).userShares` |
 | Staking Since | `getPosition(user).stakingStartTime` |
 
+---
+
+## Proposed Storage Fields (V2)
+
+The current contract does not track lifetime user metrics or enable on-chain APY calculation. The following fields are proposed for the next version. Since the contract is not upgradeable, this requires a redeploy + migration.
+
+### Per-User Fields (add to `UserMeta`)
+
+```solidity
+struct UserMeta {
+    uint256 lastUpdateTime;        // existing
+    uint256 stakingStartTime;      // existing
+    uint256 totalCashbackReceived; // NEW
+    uint256 totalRnbwStaked;       // NEW
+    uint256 totalRnbwUnstaked;     // NEW
+    uint256 totalExitFeePaid;      // NEW
+}
+```
+
+| Field | Incremented in | Purpose | Resets on unstake? |
+|-------|---------------|---------|-------------------|
+| `totalCashbackReceived` | `_allocateCashback` | Lifetime cashback RNBW allocated to this user. Enables on-chain "Lifetime Cashback" display. | No |
+| `totalRnbwStaked` | `_stake` | Lifetime RNBW deposited via `stake()`. Needed to compute on-chain earnings (cost basis). | No |
+| `totalRnbwUnstaked` | `_unstake` | Lifetime net RNBW received from `unstake()` (after exit fee). Completes lifetime P&L. | No |
+| `totalExitFeePaid` | `_unstake` | Lifetime exit fees paid. Useful for analytics and loyalty programs. | No |
+
+### Global Field (add to contract storage)
+
+```solidity
+uint256 public totalCashbackAllocated; // NEW
+```
+
+| Field | Incremented in | Purpose |
+|-------|---------------|---------|
+| `totalCashbackAllocated` | `_allocateCashback` | Protocol-wide cumulative cashback. Enables APY calculation without an indexer by comparing values at two different blocks. |
+
+### Gas Impact
+
+All new fields are warm `SSTORE` operations (+5,000 gas each, or +22,100 gas on first write per user).
+
+| Scenario | Extra gas per tx | USD at 0.006 gwei on Base |
+|----------|-----------------|--------------------------|
+| `_allocateCashback` | +7,100 (1 per-user + 1 global) | ~$0.005 |
+| `_stake` | +5,000 (1 per-user) | ~$0.004 |
+| `_unstake` | +10,000 (2 per-user) | ~$0.007 |
+
+At 500 tx/day: **~$2.50/month** additional cost.
+
+---
+
+## APY Calculation (Off-Chain)
+
+APY is computed off-chain using on-chain state at two different blocks. No indexer required.
+
+### Industry Standard
+
+This is the same approach used by major staking protocols:
+
+| Protocol | Method | Window |
+|----------|--------|--------|
+| **Lido (stETH)** | `(postTotalEther/postTotalShares) / (preTotalEther/preTotalShares)` annualized | 7-day SMA of daily APR values |
+| **Rocket Pool (rETH)** | rETH exchange rate change over time, annualized | 7-day rolling |
+| **Coinbase (cbETH)** | cbETH exchange rate delta, annualized | 7-day rolling |
+
+All protocols use the same core idea: **compare the exchange rate at two points in time, annualize the difference**. The only variations are window size and smoothing (simple vs. weighted average).
+
+Lido exposes this via a public API (`/v1/protocol/steth/apr/sma`) that returns daily APR values and a 7-day simple moving average.
+
+### Data Sources
+
+| Component | What drives it | On-chain signal |
+|-----------|---------------|-----------------|
+| Exit Fee APY | Users unstaking (15% stays in pool) | `getExchangeRate()` increases |
+| Cashback APY | Cashback allocated to stakers | `totalCashbackAllocated` increases |
+
+Cashback does **not** move the exchange rate (shares and pool grow proportionally), so it must be tracked separately.
+
+### Reads (2 RPC calls at block A and block B)
+
+```javascript
+// Block A (7 days ago)
+const rateA     = await contract.getExchangeRate({ blockTag: blockA });
+const cashbackA = await contract.totalCashbackAllocated({ blockTag: blockA });
+const poolA     = await contract.totalPooledRnbw({ blockTag: blockA });
+const tsA       = (await provider.getBlock(blockA)).timestamp;
+
+// Block B (now)
+const rateB     = await contract.getExchangeRate({ blockTag: blockB });
+const cashbackB = await contract.totalCashbackAllocated({ blockTag: blockB });
+const tsB       = (await provider.getBlock(blockB)).timestamp;
+```
+
+### Formula
+
+```javascript
+const SECONDS_PER_YEAR = 365.25 * 86400; // 31_557_600
+const elapsed = tsB - tsA;
+
+// 1. Exit Fee APY (from exchange rate growth)
+const exitFeeApy = ((rateB / rateA) ** (SECONDS_PER_YEAR / elapsed) - 1) * 100;
+
+// 2. Cashback APY (from global counter delta)
+const cashbackApy = ((cashbackB - cashbackA) / poolA) * (SECONDS_PER_YEAR / elapsed) * 100;
+
+// 3. Total APY
+const totalApy = exitFeeApy + cashbackApy;
+```
+
+### Recommended Time Window
+
+Use **7-day rolling window** (industry standard used by Lido, Rocket Pool, Coinbase):
+
+| Window | Block gap (Base, 2s blocks) | Use case |
+|--------|---------------------------|----------|
+| 24 hours | ~43,200 blocks | Daily data point |
+| **7 days** | **~302,400 blocks** | **Primary displayed APY** |
+| 30 days | ~1,296,000 blocks | Secondary / long-term APY |
+
+7 days balances smoothness (avoids single-whale-unstake spikes) with responsiveness (reflects recent activity).
+
+```javascript
+const blockB = await provider.getBlockNumber();  // now
+const blockA = blockB - 302_400;                 // ~7 days ago on Base
+```
+
+### Per-User Lifetime P&L (from `UserMeta`)
+
+```javascript
+const position = await contract.getPosition(user);
+const meta     = await contract.userMeta(user);
+
+const currentValue = position.stakedAmount;
+
+// Total lifetime earnings
+const lifetimeEarnings =
+    currentValue
+    + meta.totalRnbwUnstaked
+    - meta.totalRnbwStaked
+    + meta.totalCashbackReceived;
+
+// Broken down
+const cashbackEarnings = meta.totalCashbackReceived;
+const exitFeesPaid     = meta.totalExitFeePaid;
+const exchangeRateGain = currentValue
+    + meta.totalRnbwUnstaked
+    + meta.totalExitFeePaid
+    - meta.totalRnbwStaked
+    - meta.totalCashbackReceived;
+```
+
+| Metric | Formula | Meaning |
+|--------|---------|---------|
+| Total APY | `exitFeeApy + cashbackApy` | Annualized return for stakers |
+| Exit Fee APY | `(rateB/rateA)^(year/elapsed) - 1` | Yield from other users unstaking |
+| Cashback APY | `(deltaCashback/pool) * (year/elapsed)` | Yield from cashback program |
+| Lifetime P&L | `currentValue + totalUnstaked - totalStaked + totalCashback` | User's all-time profit/loss |
+| Exchange Rate Gain | `P&L - cashbackEarnings` | Pure staking yield (exit fee redistribution) |
+
+---
+
 ## Deployment
 
 ### Environment Variables
