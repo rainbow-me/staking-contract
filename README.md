@@ -241,54 +241,6 @@ Each cashback allocation immediately increases Alice's shares. No separate compo
 
 ---
 
-## Proposed Storage Fields (V2)
-
-The current contract does not track lifetime user metrics or enable on-chain APY calculation. The following fields are proposed for the next version. Since the contract is not upgradeable, this requires a redeploy + migration.
-
-### Per-User Fields (add to `UserMeta`)
-
-```solidity
-struct UserMeta {
-    uint256 lastUpdateTime;        // existing
-    uint256 stakingStartTime;      // existing
-    uint256 totalCashbackReceived; // NEW
-    uint256 totalRnbwStaked;       // NEW
-    uint256 totalRnbwUnstaked;     // NEW
-    uint256 totalExitFeePaid;      // NEW
-}
-```
-
-| Field | Incremented in | Purpose | Resets on unstake? |
-|-------|---------------|---------|-------------------|
-| `totalCashbackReceived` | `_allocateCashback` | Lifetime cashback RNBW allocated to this user. Enables on-chain "Lifetime Cashback" display. | No |
-| `totalRnbwStaked` | `_stake` | Lifetime RNBW deposited via `stake()`. Needed to compute on-chain earnings (cost basis). | No |
-| `totalRnbwUnstaked` | `_unstake` | Lifetime net RNBW received from `unstake()` (after exit fee). Completes lifetime P&L. | No |
-| `totalExitFeePaid` | `_unstake` | Lifetime exit fees paid. Useful for analytics and loyalty programs. | No |
-
-### Global Field (add to contract storage)
-
-```solidity
-uint256 public totalCashbackAllocated; // NEW
-```
-
-| Field | Incremented in | Purpose |
-|-------|---------------|---------|
-| `totalCashbackAllocated` | `_allocateCashback` | Protocol-wide cumulative cashback. Enables APY calculation without an indexer by comparing values at two different blocks. |
-
-### Gas Impact
-
-All new fields are warm `SSTORE` operations (+5,000 gas each, or +22,100 gas on first write per user).
-
-| Scenario | Extra gas per tx | USD at 0.006 gwei on Base |
-|----------|-----------------|--------------------------|
-| `_allocateCashback` | +7,100 (1 per-user + 1 global) | ~$0.005 |
-| `_stake` | +5,000 (1 per-user) | ~$0.004 |
-| `_unstake` | +10,000 (2 per-user) | ~$0.007 |
-
-At 500 tx/day: **~$2.50/month** additional cost.
-
----
-
 ## APY Calculation (Off-Chain)
 
 APY is computed off-chain using on-chain state at two different blocks. No indexer required.
@@ -442,7 +394,37 @@ make verify-production ADDRESS=0x...  # verify on Basescan
 - **Inflation guard**: `ZeroSharesMinted` revert protects depositors from rounding attacks
 - **Residual sweep**: When only dead shares remain, orphaned exit fees are swept to safe and pool is reset
 - **Exit fee rounding**: Ceiling division (`Math.mulDiv` with `Rounding.Ceil`) ensures fractional wei always favors the protocol
+- **Dust unstake guard**: `ZeroUnstakeAmount` revert prevents ceil-rounded exit fee from consuming 100% of a dust unstake
 - **Batch size limit**: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve solvency check
+
+### Dead Shares Lifecycle
+
+Dead shares prevent the [share inflation / first depositor attack](https://docs.openzeppelin.com/contracts/5.x/erc4626#inflation-attack) (same pattern as UniswapV2 and OpenZeppelin ERC4626). The key design decision is that dead shares **do not accumulate** — they are always exactly 0 or 1000.
+
+**Why dead shares exist:**
+
+In a shares-based pool, an attacker can front-run the first depositor by staking 1 wei, then donating a large amount directly to the pool. This inflates the exchange rate so that the victim's deposit rounds down to 0 shares, effectively stealing their tokens. Minting 1000 shares to a burn address (`0xdead`) on the first stake makes this attack economically impractical — the attacker would need to donate ~1000x more to achieve the same rounding effect.
+
+**Lifecycle (3 phases):**
+
+```
+Phase 1: Empty pool (totalShares == 0)
+  → First stake triggers: shares[0xdead] += 1000, totalShares += 1000
+  → User gets: amount - 1000 shares
+  → Dead shares: 1000
+
+Phase 2: Active pool (multiple stakers)
+  → All subsequent stakes use: sharesToMint = (amount * totalShares) / totalPooledRnbw
+  → No dead shares minted (totalShares > 0, hits else branch)
+  → Dead shares: still 1000 (unchanged)
+
+Phase 3: Last user unstakes (totalShares == MINIMUM_SHARES)
+  → Residual sweep: totalPooledRnbw → safe, shares[0xdead] = 0, totalShares = 0
+  → Dead shares: 0 (reset to clean slate)
+  → Next staker re-enters Phase 1
+```
+
+**Invariant:** `totalShares == 0 ⟹ totalPooledRnbw == 0`. The residual sweep enforces this — without it, orphaned exit-fee RNBW would remain in the pool after all user shares are burned, creating an accounting desync where the next staker gets 1:1 share minting but the pool already holds leftover tokens.
 
 ## Build
 
