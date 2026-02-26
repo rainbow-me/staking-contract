@@ -114,7 +114,7 @@ contract RNBWStakingSimulation is Test {
         rnbwToken.mint(admin, amount);
         vm.startPrank(admin);
         rnbwToken.approve(address(staking), amount);
-        staking.depositCashbackRewards(amount);
+        staking.fundCashbackReserve(amount);
         vm.stopPrank();
         staking.allocateCashbackWithSignature(user, amount, allocateNonce, expiry, sig);
         allocateNonce++;
@@ -322,7 +322,7 @@ contract RNBWStakingSimulation is Test {
         rnbwToken.mint(admin, 1);
         vm.startPrank(admin);
         rnbwToken.approve(address(staking), 1);
-        staking.depositCashbackRewards(1);
+        staking.fundCashbackReserve(1);
         vm.stopPrank();
 
         vm.expectRevert(IRNBWStaking.ZeroSharesMinted.selector);
@@ -347,7 +347,7 @@ contract RNBWStakingSimulation is Test {
         rnbwToken.mint(admin, 1000 ether);
         vm.startPrank(admin);
         rnbwToken.approve(address(staking), 1000 ether);
-        staking.depositCashbackRewards(1000 ether);
+        staking.fundCashbackReserve(1000 ether);
         vm.stopPrank();
 
         bytes32 structHash =
@@ -378,7 +378,7 @@ contract RNBWStakingSimulation is Test {
         rnbwToken.mint(admin, 500 ether);
         vm.startPrank(admin);
         rnbwToken.approve(address(staking), 500 ether);
-        staking.depositCashbackRewards(500 ether);
+        staking.fundCashbackReserve(500 ether);
         vm.stopPrank();
 
         uint256 nonce = 500;

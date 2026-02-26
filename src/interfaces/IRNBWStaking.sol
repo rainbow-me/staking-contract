@@ -72,9 +72,14 @@ interface IRNBWStaking {
     /// @notice Emitted when the admin deposits RNBW to fund cashback rewards
     /// @param from The depositor's address (must be safe)
     /// @param amount The amount of RNBW deposited
-    event CashbackRewardsDeposited(address indexed from, uint256 amount);
+    event CashbackReserveFunded(address indexed from, uint256 amount);
 
-    /// @notice Emitted when the safe (admin) address is updated
+    /// @notice Emitted when a new safe address is proposed (step 1 of 2-step transfer)
+    /// @param currentSafe The current safe address that proposed the change
+    /// @param proposedSafe The proposed new safe address
+    event SafeProposed(address indexed currentSafe, address indexed proposedSafe);
+
+    /// @notice Emitted when the safe (admin) address is updated (step 2 of 2-step transfer)
     /// @param oldSafe The previous safe address
     /// @param newSafe The new safe address
     event SafeUpdated(address indexed oldSafe, address indexed newSafe);
@@ -142,6 +147,9 @@ interface IRNBWStaking {
 
     /// @notice Thrown when emergencyWithdraw tries to withdraw more RNBW than excess
     error InsufficientExcess();
+
+    /// @notice Thrown when acceptSafe is called but no safe transfer has been proposed
+    error NoPendingSafe();
 
     /// @notice Thrown when a stake or cashback amount is too small to mint at least 1 share
     error ZeroSharesMinted();
@@ -286,9 +294,12 @@ interface IRNBWStaking {
 
     /// @notice Deposit RNBW to fund the cashback reserve
     /// @param amount The amount of RNBW to deposit
-    function depositCashbackRewards(uint256 amount) external;
+    function fundCashbackReserve(uint256 amount) external;
 
-    /// @notice Update the safe (admin) address
-    /// @param newSafe The new safe address
-    function setSafe(address newSafe) external;
+    /// @notice Propose a new safe address (step 1 of 2-step transfer, callable by current safe only)
+    /// @param newSafe The proposed new safe address
+    function proposeSafe(address newSafe) external;
+
+    /// @notice Accept the proposed safe address (step 2 of 2-step transfer, callable by pending safe only)
+    function acceptSafe() external;
 }

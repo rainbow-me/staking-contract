@@ -46,7 +46,7 @@ contract RNBWStakingTest is Test {
         rnbwToken.mint(admin, amount);
         vm.startPrank(admin);
         rnbwToken.approve(address(staking), amount);
-        staking.depositCashbackRewards(amount);
+        staking.fundCashbackReserve(amount);
         vm.stopPrank();
     }
 
@@ -254,7 +254,7 @@ contract RNBWStakingTest is Test {
 
         vm.startPrank(admin);
         rnbwToken.approve(address(staking), 1000 ether);
-        staking.depositCashbackRewards(1000 ether);
+        staking.fundCashbackReserve(1000 ether);
         vm.stopPrank();
 
         assertEq(rnbwToken.balanceOf(address(staking)), 1000 ether);
@@ -266,14 +266,14 @@ contract RNBWStakingTest is Test {
         vm.startPrank(alice);
         rnbwToken.approve(address(staking), 1000 ether);
         vm.expectRevert(IRNBWStaking.Unauthorized.selector);
-        staking.depositCashbackRewards(1000 ether);
+        staking.fundCashbackReserve(1000 ether);
         vm.stopPrank();
     }
 
     function test_DepositCashbackRewardsRevertZeroAmount() public {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
-        staking.depositCashbackRewards(0);
+        staking.fundCashbackReserve(0);
     }
 
     function test_Pause() public {
@@ -410,25 +410,46 @@ contract RNBWStakingTest is Test {
         assertEq(staking.cashbackReserve(), 50 ether);
     }
 
-    function test_SetSafe() public {
+    function test_ProposeSafeAndAccept() public {
         address newSafe = makeAddr("newSafe");
 
         vm.prank(admin);
-        staking.setSafe(newSafe);
+        staking.proposeSafe(newSafe);
+        assertEq(staking.pendingSafe(), newSafe);
+        assertEq(staking.safe(), admin);
 
+        vm.prank(newSafe);
+        staking.acceptSafe();
         assertEq(staking.safe(), newSafe);
+        assertEq(staking.pendingSafe(), address(0));
     }
 
-    function test_SetSafeRevertZeroAddress() public {
+    function test_ProposeSafeRevertZeroAddress() public {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
-        staking.setSafe(address(0));
+        staking.proposeSafe(address(0));
     }
 
-    function test_SetSafeRevertUnauthorized() public {
+    function test_ProposeSafeRevertUnauthorized() public {
         vm.prank(alice);
         vm.expectRevert(IRNBWStaking.Unauthorized.selector);
-        staking.setSafe(makeAddr("newSafe"));
+        staking.proposeSafe(makeAddr("newSafe"));
+    }
+
+    function test_AcceptSafeRevertNoPending() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.NoPendingSafe.selector);
+        staking.acceptSafe();
+    }
+
+    function test_AcceptSafeRevertWrongCaller() public {
+        address newSafe = makeAddr("newSafe");
+        vm.prank(admin);
+        staking.proposeSafe(newSafe);
+
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.NoPendingSafe.selector);
+        staking.acceptSafe();
     }
 
     function test_DomainSeparator() public view {

@@ -51,22 +51,26 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     IERC20 public immutable RNBW_TOKEN;
 
+    // --- Admin ---
     address public safe;
+    address public pendingSafe;
     uint256 public exitFeeBps;
     uint256 public minStakeAmount;
 
-    mapping(address user => uint256 shareBalance) public shares;
+    // --- Pool ---
+    mapping(address => uint256) public shares;
     uint256 public totalShares;
     uint256 public totalPooledRnbw;
     uint256 public cashbackReserve;
-
-    mapping(address user => UserMeta meta) public userMeta;
-    /// @dev Nonces for signature-based cashback allocation (prevents replay attacks).
-    mapping(address user => mapping(uint256 nonce => bool used)) public usedNonces;
-    mapping(address signer => bool trusted) internal _trustedSigners;
-    uint256 public trustedSignerCount;
-
     uint256 public totalCashbackAllocated;
+
+    // --- Users ---
+    mapping(address => UserMeta) public userMeta;
+    mapping(address => mapping(uint256 => bool)) public usedNonces;
+
+    // --- Signers ---
+    mapping(address => bool) internal _trustedSigners;
+    uint256 public trustedSignerCount;
 
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
@@ -119,7 +123,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @inheritdoc IRNBWStaking
-    /// @dev Contract must be pre-funded with RNBW via depositCashbackRewards().
+    /// @dev Contract must be pre-funded with RNBW via fundCashbackReserve().
     ///      Cashback is converted to shares immediately in a single step.
     function allocateCashbackWithSignature(
         address user,
@@ -268,10 +272,18 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @inheritdoc IRNBWStaking
-    function setSafe(address newSafe) external onlySafe {
+    function proposeSafe(address newSafe) external onlySafe {
         if (newSafe == address(0)) revert ZeroAddress();
-        emit SafeUpdated(safe, newSafe);
-        safe = newSafe;
+        pendingSafe = newSafe;
+        emit SafeProposed(safe, newSafe);
+    }
+
+    /// @inheritdoc IRNBWStaking
+    function acceptSafe() external {
+        if (msg.sender != pendingSafe) revert NoPendingSafe();
+        emit SafeUpdated(safe, msg.sender);
+        safe = msg.sender;
+        pendingSafe = address(0);
     }
 
     /// @inheritdoc IRNBWStaking
@@ -285,11 +297,11 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @inheritdoc IRNBWStaking
-    function depositCashbackRewards(uint256 amount) external onlySafe {
+    function fundCashbackReserve(uint256 amount) external onlySafe {
         if (amount == 0) revert ZeroAmount();
         RNBW_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
         cashbackReserve += amount;
-        emit CashbackRewardsDeposited(msg.sender, amount);
+        emit CashbackReserveFunded(msg.sender, amount);
     }
 
     /// @inheritdoc IRNBWStaking
@@ -464,7 +476,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @dev Allocates cashback by minting shares directly in one step.
-    ///      Contract must be pre-funded with RNBW via depositCashbackRewards().
+    ///      Contract must be pre-funded with RNBW via fundCashbackReserve().
     ///      Reverts if cashback is too small to mint at least 1 share (backend should batch).
     function _allocateCashback(address user, uint256 rnbwCashback) internal {
         // 1. Validate

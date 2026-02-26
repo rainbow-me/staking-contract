@@ -16,8 +16,8 @@ Shares-based staking contract for **$RNBW** on Base. Exit fees stay in the pool 
 | Exit fee | Configurable 1%--75%, default 15% -- stays in pool |
 | Cashback | Backend allocates via `allocateCashbackWithSignature()` -- mints shares immediately in one step |
 | Dead shares | First deposit mints 1000 shares to `0xdead` (UniswapV2-style inflation protection) |
-| Cashback reserve | Pre-funded via `depositCashbackRewards()`, tracked separately, protected from emergency withdrawal |
-| Access control | Safe (multisig) for admin ops, up to 3 trusted EIP-712 signers |
+| Cashback reserve | Pre-funded via `fundCashbackReserve()`, tracked separately, protected from emergency withdrawal |
+| Access control | Safe (multisig) for admin ops, 2-step safe transfer, up to 3 trusted EIP-712 signers |
 | Signatures | EIP-712 with expiry + nonce replay protection (cashback only) |
 
 ## Function Reference
@@ -44,10 +44,11 @@ Any `msg.sender` can submit these transactions (relayer, bot, user). The contrac
 
 | Function | Description |
 |----------|-------------|
-| `depositCashbackRewards(amount)` | Pre-fund the cashback reserve with RNBW |
+| `fundCashbackReserve(amount)` | Pre-fund the cashback reserve with RNBW |
 | `setExitFeeBps(newExitFeeBps)` | Update exit fee (1%--75%) |
 | `setMinStakeAmount(newMinStakeAmount)` | Update minimum first-time stake (1 RNBW -- 1M RNBW) |
-| `setSafe(newSafe)` | Transfer admin to a new Safe address |
+| `proposeSafe(newSafe)` | Propose a new Safe address (step 1 of 2-step transfer) |
+| `acceptSafe()` | Accept proposed Safe address (step 2, callable by pending safe only) |
 | `addTrustedSigner(signer)` | Add an EIP-712 signer (max 3) |
 | `removeTrustedSigner(signer)` | Remove an EIP-712 signer (cannot remove last) |
 | `pause()` / `unpause()` | Pause/unpause stake, unstake, and cashback |
@@ -191,7 +192,7 @@ Pool after:     totalPooledRnbw = 0, totalShares = 0 (clean slate)
 
 **Entry point:** `allocateCashbackWithSignature(user, rnbwCashback, nonce, expiry, sig)` -- called by backend (any `msg.sender`, signature validated).
 
-**Prerequisites:** Contract must be pre-funded via `depositCashbackRewards(amount)` (admin). This adds RNBW to the `cashbackReserve`, which is tracked separately from the staking pool and protected from `emergencyWithdraw`.
+**Prerequisites:** Contract must be pre-funded via `fundCashbackReserve(amount)` (admin). This adds RNBW to the `cashbackReserve`, which is tracked separately from the staking pool and protected from `emergencyWithdraw`.
 
 Cashback mints shares **immediately in one step** -- no pending balance, no separate compound transaction.
 
@@ -204,7 +205,7 @@ Cashback mints shares **immediately in one step** -- no pending balance, no sepa
 5. **Dust guard** -- If `sharesToMint` rounds to 0, reverts with `ZeroSharesMinted`. Backend should batch small amounts or retry later.
 6. **Mint shares** -- Update `shares[user]`, `totalShares`, `totalPooledRnbw`. Deduct from `cashbackReserve`.
 
-No token transfer happens -- the RNBW is already in the contract from `depositCashbackRewards()`. The function moves it from `cashbackReserve` into `totalPooledRnbw` by minting shares.
+No token transfer happens -- the RNBW is already in the contract from `fundCashbackReserve()`. The function moves it from `cashbackReserve` into `totalPooledRnbw` by minting shares.
 
 **Example: Cashback after two swaps**
 
@@ -395,6 +396,7 @@ make verify-production ADDRESS=0x...  # verify on Basescan
 - **Residual sweep**: When only dead shares remain, orphaned exit fees are swept to safe and pool is reset
 - **Exit fee rounding**: Ceiling division (`Math.mulDiv` with `Rounding.Ceil`) ensures fractional wei always favors the protocol
 - **Dust unstake guard**: `ZeroUnstakeAmount` revert prevents ceil-rounded exit fee from consuming 100% of a dust unstake
+- **2-step safe transfer**: `proposeSafe()` + `acceptSafe()` prevents admin transfer to wrong address (same pattern as OpenZeppelin `Ownable2Step`)
 - **Batch size limit**: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve solvency check
 
 ### Dead Shares Lifecycle
@@ -438,7 +440,7 @@ forge build
 forge test
 ```
 
-63 tests across two suites: unit tests (`RNBWStaking.t.sol`) and simulation tests (`RNBWStakingSimulation.t.sol`).
+Unit tests (`RNBWStaking.t.sol`) and simulation tests (`RNBWStakingSimulation.t.sol`).
 
 ```shell
 forge test -vvv                                          # verbose output
