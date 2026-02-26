@@ -98,13 +98,13 @@ interface IRNBWStaking {
     error ZeroAmount();
 
     /// @notice Thrown when a user tries to burn more shares than they hold
-    error InsufficientShares();
+    error InsufficientShares(address user, uint256 requested, uint256 available);
 
     /// @notice Thrown when a first-time staker's amount is below minStakeAmount
-    error BelowMinimumStake();
+    error BelowMinimumStake(address user, uint256 amount, uint256 minRequired);
 
     /// @notice Thrown when an action requires an active stake but the user has none
-    error NoStakePosition();
+    error NoStakePosition(address user);
 
     /// @notice Thrown when an EIP-712 signature is invalid or from an untrusted signer
     error InvalidSignature();
@@ -152,10 +152,10 @@ interface IRNBWStaking {
     error NoPendingSafe();
 
     /// @notice Thrown when a stake or cashback amount is too small to mint at least 1 share
-    error ZeroSharesMinted();
+    error ZeroSharesMinted(address user, uint256 amount);
 
     /// @notice Thrown when ceil-rounded exit fee consumes entire unstake amount (dust protection)
-    error ZeroUnstakeAmount();
+    error ZeroUnstakeAmount(address user, uint256 rnbwValue);
 
     /// @notice Thrown when batch array lengths do not match
     error ArrayLengthMismatch();

@@ -82,7 +82,9 @@ contract RNBWStakingTest is Test {
 
         vm.startPrank(alice);
         rnbwToken.approve(address(staking), amount);
-        vm.expectRevert(IRNBWStaking.BelowMinimumStake.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(IRNBWStaking.BelowMinimumStake.selector, alice, amount, staking.minStakeAmount())
+        );
         staking.stake(amount);
         vm.stopPrank();
     }
@@ -131,14 +133,16 @@ contract RNBWStakingTest is Test {
         vm.startPrank(alice);
         rnbwToken.approve(address(staking), 100 ether);
         staking.stake(100 ether);
-        vm.expectRevert(IRNBWStaking.InsufficientShares.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(IRNBWStaking.InsufficientShares.selector, alice, 200 ether, staking.shares(alice))
+        );
         staking.unstake(200 ether);
         vm.stopPrank();
     }
 
     function test_UnstakeRevertNoPosition() public {
         vm.prank(alice);
-        vm.expectRevert(IRNBWStaking.NoStakePosition.selector);
+        vm.expectRevert(abi.encodeWithSelector(IRNBWStaking.NoStakePosition.selector, alice));
         staking.unstake(100 ether);
     }
 
@@ -217,7 +221,7 @@ contract RNBWStakingTest is Test {
         uint256 expiry = block.timestamp + 60;
         bytes memory sig = _signAllocateCashback(alice, 10 ether, nonce, expiry);
 
-        vm.expectRevert(IRNBWStaking.NoStakePosition.selector);
+        vm.expectRevert(abi.encodeWithSelector(IRNBWStaking.NoStakePosition.selector, alice));
         staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, sig);
     }
 
