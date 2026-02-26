@@ -325,7 +325,7 @@ contract RNBWStakingSimulation is Test {
         staking.fundCashbackReserve(1);
         vm.stopPrank();
 
-        vm.expectRevert(IRNBWStaking.ZeroSharesMinted.selector);
+        vm.expectRevert(abi.encodeWithSelector(IRNBWStaking.ZeroSharesMinted.selector, alice, uint256(1)));
         staking.allocateCashbackWithSignature(alice, 1, allocateNonce, expiry, sig);
 
         console.log("Dust cashback (1 wei) correctly reverted with ZeroSharesMinted");

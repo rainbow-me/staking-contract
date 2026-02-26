@@ -367,7 +367,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         // 1. Validate amount
         if (amount == 0) revert ZeroAmount();
         if (shares[user] == 0 && amount < minStakeAmount) {
-            revert BelowMinimumStake();
+            revert BelowMinimumStake(user, amount, minStakeAmount);
         }
 
         // 2. Transfer RNBW tokens from user to contract
@@ -389,7 +389,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    the deposit rounds to 0 shares, revert to protect the depositor.
         //    Without this, the depositor's RNBW would be absorbed into the pool
         //    with no shares minted, effectively donating to existing stakers.
-        if (sharesToMint == 0) revert ZeroSharesMinted();
+        if (sharesToMint == 0) revert ZeroSharesMinted(user, amount);
 
         // 5. Update user's share balance and global totals
         shares[user] += sharesToMint;
@@ -415,8 +415,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function _unstake(address user, uint256 sharesToBurn) internal {
         // 1. Validate request
         if (sharesToBurn == 0) revert ZeroAmount();
-        if (shares[user] == 0) revert NoStakePosition();
-        if (shares[user] < sharesToBurn) revert InsufficientShares();
+        if (shares[user] == 0) revert NoStakePosition(user);
+        if (shares[user] < sharesToBurn) revert InsufficientShares(user, sharesToBurn, shares[user]);
 
         // 2. Calculate RNBW value of shares at current exchange rate
         //    Formula: rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares
@@ -427,7 +427,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    (user pays at most 1 wei more, protocol is never short-changed).
         uint256 exitFee = Math.mulDiv(rnbwValue, exitFeeBps, BASIS_POINTS, Math.Rounding.Ceil);
         uint256 netAmount = rnbwValue - exitFee;
-        if (netAmount == 0) revert ZeroUnstakeAmount();
+        if (netAmount == 0) revert ZeroUnstakeAmount(user, rnbwValue);
 
         // 4. Burn user's shares and update global totals
         //    NOTE: Exit fee stays in pool (totalPooledRnbw only decreases by netAmount)
@@ -481,7 +481,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function _allocateCashback(address user, uint256 rnbwCashback) internal {
         // 1. Validate
         if (rnbwCashback == 0) revert ZeroAmount();
-        if (shares[user] == 0) revert NoStakePosition();
+        if (shares[user] == 0) revert NoStakePosition(user);
 
         // 2. Verify cashback reserve has enough RNBW to cover this allocation
         if (rnbwCashback > cashbackReserve) {
@@ -498,7 +498,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
         // 4. Revert if cashback is too small to mint shares — backend should
         //    batch small amounts or retry when the exchange rate is more favorable
-        if (sharesToMint == 0) revert ZeroSharesMinted();
+        if (sharesToMint == 0) revert ZeroSharesMinted(user, rnbwCashback);
 
         // 5. Mint shares and move cashback RNBW from reserve into the pool
         shares[user] += sharesToMint;
