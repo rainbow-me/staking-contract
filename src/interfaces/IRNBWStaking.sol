@@ -8,9 +8,17 @@ interface IRNBWStaking {
     /// @notice Metadata tracked per staking position
     /// @param lastUpdateTime Timestamp of the last stake, unstake, or cashback action
     /// @param stakingStartTime Timestamp of the user's first stake (reset to 0 on full unstake)
+    /// @param totalCashbackReceived Lifetime cumulative cashback RNBW allocated to this user (never resets)
+    /// @param totalRnbwStaked Lifetime cumulative RNBW deposited via stake() (never resets)
+    /// @param totalRnbwUnstaked Lifetime cumulative net RNBW received from unstake(), after exit fee (never resets)
+    /// @param totalExitFeePaid Lifetime cumulative exit fees paid by this user (never resets)
     struct UserMeta {
         uint256 lastUpdateTime;
         uint256 stakingStartTime;
+        uint256 totalCashbackReceived;
+        uint256 totalRnbwStaked;
+        uint256 totalRnbwUnstaked;
+        uint256 totalExitFeePaid;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -61,12 +69,21 @@ interface IRNBWStaking {
     /// @param newMinStakeAmount The new minimum stake amount
     event MinStakeAmountUpdated(uint256 indexed oldMinStakeAmount, uint256 indexed newMinStakeAmount);
 
+    /// @notice Emitted when partial unstake permission is toggled
+    /// @param allowed Whether partial unstake is now allowed
+    event PartialUnstakeToggled(bool allowed);
+
     /// @notice Emitted when the admin deposits RNBW to fund cashback rewards
     /// @param from The depositor's address (must be safe)
     /// @param amount The amount of RNBW deposited
-    event CashbackRewardsDeposited(address indexed from, uint256 amount);
+    event CashbackReserveFunded(address indexed from, uint256 amount);
 
-    /// @notice Emitted when the safe (admin) address is updated
+    /// @notice Emitted when a new safe address is proposed (step 1 of 2-step transfer)
+    /// @param currentSafe The current safe address that proposed the change
+    /// @param proposedSafe The proposed new safe address
+    event SafeProposed(address indexed currentSafe, address indexed proposedSafe);
+
+    /// @notice Emitted when the safe (admin) address is updated (step 2 of 2-step transfer)
     /// @param oldSafe The previous safe address
     /// @param newSafe The new safe address
     event SafeUpdated(address indexed oldSafe, address indexed newSafe);
@@ -85,13 +102,13 @@ interface IRNBWStaking {
     error ZeroAmount();
 
     /// @notice Thrown when a user tries to burn more shares than they hold
-    error InsufficientShares();
+    error InsufficientShares(address user, uint256 requested, uint256 available);
 
     /// @notice Thrown when a first-time staker's amount is below minStakeAmount
-    error BelowMinimumStake();
+    error BelowMinimumStake(address user, uint256 amount, uint256 minRequired);
 
     /// @notice Thrown when an action requires an active stake but the user has none
-    error NoStakePosition();
+    error NoStakePosition(address user);
 
     /// @notice Thrown when an EIP-712 signature is invalid or from an untrusted signer
     error InvalidSignature();
@@ -135,8 +152,17 @@ interface IRNBWStaking {
     /// @notice Thrown when emergencyWithdraw tries to withdraw more RNBW than excess
     error InsufficientExcess();
 
+    /// @notice Thrown when acceptSafe is called but no safe transfer has been proposed
+    error NoPendingSafe();
+
     /// @notice Thrown when a stake or cashback amount is too small to mint at least 1 share
-    error ZeroSharesMinted();
+    error ZeroSharesMinted(address user, uint256 amount);
+
+    /// @notice Thrown when ceil-rounded exit fee consumes entire unstake amount (dust protection)
+    error ZeroUnstakeAmount(address user, uint256 rnbwValue);
+
+    /// @notice Thrown when partial unstake is attempted but not allowed
+    error PartialUnstakeDisabled(address user, uint256 sharesToBurn, uint256 totalUserShares);
 
     /// @notice Thrown when batch array lengths do not match
     error ArrayLengthMismatch();
@@ -155,6 +181,9 @@ interface IRNBWStaking {
     /// @notice Burn shares to unstake RNBW. An exit fee is deducted and stays in the pool.
     /// @param sharesToBurn The number of shares to burn
     function unstake(uint256 sharesToBurn) external;
+
+    /// @notice Burn all of the caller's shares to unstake RNBW. Convenience wrapper around unstake().
+    function unstakeAll() external;
 
     /// @notice Allocate cashback to a staker by minting shares (backend-only, signature-gated)
     /// @param user The recipient staker's address
@@ -194,10 +223,23 @@ interface IRNBWStaking {
     /// @return userShares The user's raw share balance
     /// @return lastUpdateTime Timestamp of the last action on this position
     /// @return stakingStartTime Timestamp of the user's first stake
+    /// @return totalCashbackReceived Lifetime cumulative cashback RNBW allocated
+    /// @return totalRnbwStaked Lifetime cumulative RNBW deposited via stake()
+    /// @return totalRnbwUnstaked Lifetime cumulative net RNBW received from unstake()
+    /// @return totalExitFeePaid Lifetime cumulative exit fees paid
     function getPosition(address user)
         external
         view
-        returns (uint256 stakedAmount, uint256 userShares, uint256 lastUpdateTime, uint256 stakingStartTime);
+        returns (
+            uint256 stakedAmount,
+            uint256 userShares,
+            uint256 lastUpdateTime,
+            uint256 stakingStartTime,
+            uint256 totalCashbackReceived,
+            uint256 totalRnbwStaked,
+            uint256 totalRnbwUnstaked,
+            uint256 totalExitFeePaid
+        );
 
     /// @notice Converts a share amount to its RNBW value at the current exchange rate
     /// @param sharesAmount The number of shares to convert
@@ -212,6 +254,21 @@ interface IRNBWStaking {
     /// @notice Returns the current exchange rate (RNBW per share), scaled by 1e18
     /// @return The exchange rate (1e18 = 1:1)
     function getExchangeRate() external view returns (uint256);
+
+    /// @notice Preview the outcome of unstaking a given number of shares
+    /// @param sharesToBurn The number of shares to burn
+    /// @return rnbwValue The gross RNBW value before exit fee
+    /// @return exitFee The exit fee amount
+    /// @return netReceived The net RNBW the user would receive
+    function previewUnstake(uint256 sharesToBurn)
+        external
+        view
+        returns (uint256 rnbwValue, uint256 exitFee, uint256 netReceived);
+
+    /// @notice Preview the number of shares that would be minted for a given stake amount
+    /// @param amount The RNBW amount to stake
+    /// @return sharesToMint The number of shares that would be minted
+    function previewStake(uint256 amount) external view returns (uint256 sharesToMint);
 
     /// @notice Checks if a nonce has been used for a given user
     /// @param user The user's address
@@ -262,9 +319,16 @@ interface IRNBWStaking {
 
     /// @notice Deposit RNBW to fund the cashback reserve
     /// @param amount The amount of RNBW to deposit
-    function depositCashbackRewards(uint256 amount) external;
+    function fundCashbackReserve(uint256 amount) external;
 
-    /// @notice Update the safe (admin) address
-    /// @param newSafe The new safe address
-    function setSafe(address newSafe) external;
+    /// @notice Propose a new safe address (step 1 of 2-step transfer, callable by current safe only)
+    /// @param newSafe The proposed new safe address
+    function proposeSafe(address newSafe) external;
+
+    /// @notice Accept the proposed safe address (step 2 of 2-step transfer, callable by pending safe only)
+    function acceptSafe() external;
+
+    /// @notice Toggle whether partial unstake is allowed (default: false)
+    /// @param allowed Whether to allow partial unstake
+    function setAllowPartialUnstake(bool allowed) external;
 }

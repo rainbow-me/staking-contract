@@ -12,12 +12,12 @@ Shares-based staking contract for **$RNBW** on Base. Exit fees stay in the pool 
 | Feature | Details |
 |---------|---------|
 | Staking | `stake()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702) |
-| Unstaking | `unstake()` -- user calls directly or via relay |
+| Unstaking | `unstake()` -- user calls directly or via relay. Partial unstake toggleable by admin (default: disabled) |
 | Exit fee | Configurable 1%--75%, default 15% -- stays in pool |
 | Cashback | Backend allocates via `allocateCashbackWithSignature()` -- mints shares immediately in one step |
 | Dead shares | First deposit mints 1000 shares to `0xdead` (UniswapV2-style inflation protection) |
-| Cashback reserve | Pre-funded via `depositCashbackRewards()`, tracked separately, protected from emergency withdrawal |
-| Access control | Safe (multisig) for admin ops, up to 3 trusted EIP-712 signers |
+| Cashback reserve | Pre-funded via `fundCashbackReserve()`, tracked separately, protected from emergency withdrawal |
+| Access control | Safe (multisig) for admin ops, 2-step safe transfer, up to 3 trusted EIP-712 signers |
 | Signatures | EIP-712 with expiry + nonce replay protection (cashback only) |
 
 ## Function Reference
@@ -28,6 +28,7 @@ Shares-based staking contract for **$RNBW** on Base. Exit fees stay in the pool 
 |----------|--------|-------------|
 | `stake(amount)` | User (direct or relay) | Stake RNBW to receive shares. `msg.sender` is always the user. |
 | `unstake(sharesToBurn)` | User (direct or relay) | Burn shares to receive RNBW minus exit fee. `msg.sender` is always the user. |
+| `unstakeAll()` | User (direct or relay) | Burn all shares. Convenience wrapper -- no need to query share balance first. |
 
 Both functions use `msg.sender`, so they work with any relay service that preserves the user's address as the caller: Gelato Turbo Relayer, Relay.link, EIP-7702 delegated EOAs.
 
@@ -44,10 +45,12 @@ Any `msg.sender` can submit these transactions (relayer, bot, user). The contrac
 
 | Function | Description |
 |----------|-------------|
-| `depositCashbackRewards(amount)` | Pre-fund the cashback reserve with RNBW |
+| `fundCashbackReserve(amount)` | Pre-fund the cashback reserve with RNBW |
 | `setExitFeeBps(newExitFeeBps)` | Update exit fee (1%--75%) |
 | `setMinStakeAmount(newMinStakeAmount)` | Update minimum first-time stake (1 RNBW -- 1M RNBW) |
-| `setSafe(newSafe)` | Transfer admin to a new Safe address |
+| `setAllowPartialUnstake(allowed)` | Toggle partial unstake (default: disabled) |
+| `proposeSafe(newSafe)` | Propose a new Safe address (step 1 of 2-step transfer) |
+| `acceptSafe()` | Accept proposed Safe address (step 2, callable by pending safe only) |
 | `addTrustedSigner(signer)` | Add an EIP-712 signer (max 3) |
 | `removeTrustedSigner(signer)` | Remove an EIP-712 signer (cannot remove last) |
 | `pause()` / `unpause()` | Pause/unpause stake, unstake, and cashback |
@@ -57,10 +60,12 @@ Any `msg.sender` can submit these transactions (relayer, bot, user). The contrac
 
 | Function | Returns |
 |----------|---------|
-| `getPosition(user)` | `(stakedAmount, userShares, lastUpdateTime, stakingStartTime)` |
+| `getPosition(user)` | `(stakedAmount, userShares, lastUpdateTime, stakingStartTime, totalCashbackReceived, totalRnbwStaked, totalRnbwUnstaked, totalExitFeePaid)` |
 | `getRnbwForShares(sharesAmount)` | RNBW value at current exchange rate |
 | `getSharesForRnbw(rnbwAmount)` | Share equivalent at current exchange rate |
 | `getExchangeRate()` | Current exchange rate scaled by 1e18 |
+| `previewStake(amount)` | `sharesToMint` -- preview shares from staking (returns 0 for dust amounts) |
+| `previewUnstake(sharesToBurn)` | `(rnbwValue, exitFee, netReceived)` -- preview unstake outcome |
 | `isNonceUsed(user, nonce)` | Whether a cashback nonce has been used |
 | `domainSeparator()` | EIP-712 domain separator |
 | `isTrustedSigner(signer)` | Whether an address is a trusted signer |
@@ -86,6 +91,8 @@ The first staker gets shares at a 1:1 ratio (minus 1000 dead shares for inflatio
 
 **Entry point:** `stake(amount)` -- user calls directly or via relay service (Gelato Turbo, Relay.link, EIP-7702). `msg.sender` is always the user.
 
+**Preview:** Call `previewStake(amount)` to get `sharesToMint` before submitting. Returns 0 for dust amounts (< 1000 wei on empty pool).
+
 **Steps:**
 
 1. **Validate** -- amount must be > 0. First-time stakers must meet `minStakeAmount` (default 1 RNBW, floor 1 RNBW, max 1M RNBW).
@@ -93,7 +100,7 @@ The first staker gets shares at a 1:1 ratio (minus 1000 dead shares for inflatio
 3. **Calculate shares** -- `sharesToMint = (amount * totalShares) / totalPooledRnbw`. If pool is empty (first staker): `sharesToMint = amount - MINIMUM_SHARES`, and 1000 dead shares are minted to `0xdead`.
 4. **Inflation guard** -- If `sharesToMint` rounds to 0 (manipulated exchange rate), the transaction reverts with `ZeroSharesMinted`.
 5. **Mint shares** -- Update `shares[user]`, `totalShares`, `totalPooledRnbw`.
-6. **Update metadata** -- Set `stakingStartTime` (first stake only), update `lastUpdateTime`.
+6. **Update metadata** -- Set `stakingStartTime` (first stake only), update `lastUpdateTime`, accumulate `totalRnbwStaked`.
 
 **Example: Two users stake into an empty pool**
 
@@ -130,20 +137,29 @@ Charlie receives fewer shares because each share is now worth more than 1 RNBW.
 
 ### Unstaking Flow
 
-**Entry point:** `unstake(sharesToBurn)` -- user calls directly or via relay service. `msg.sender` is always the user.
+**Entry points:**
+- `unstake(sharesToBurn)` -- burn specific number of shares. Subject to partial unstake toggle.
+- `unstakeAll()` -- burn all caller's shares. Always allowed regardless of partial unstake setting.
 
-**Important:** The parameter is **shares to burn**, not RNBW amount. The UI should convert a desired RNBW amount to shares: `sharesToBurn = getSharesForRnbw(desiredAmount)`. For full unstake, use `shares[user]`.
+`msg.sender` is always the user (works with relay services).
+
+**Partial unstake toggle:** By default, partial unstake is **disabled** (`allowPartialUnstake = false`). When disabled, `unstake()` only accepts `sharesToBurn == shares[user]` (full unstake). The admin can enable partial unstake via `setAllowPartialUnstake(true)`. `unstakeAll()` is always available regardless of this setting.
+
+**Important:** The parameter is **shares to burn**, not RNBW amount. The UI should convert a desired RNBW amount to shares: `sharesToBurn = getSharesForRnbw(desiredAmount)`. For full unstake, use `unstakeAll()` or `shares[user]`.
+
+**Preview:** Call `previewUnstake(sharesToBurn)` to get `(rnbwValue, exitFee, netReceived)` before submitting.
 
 **Steps:**
 
-1. **Validate** -- shares > 0, user has enough shares.
+1. **Validate** -- shares > 0, user has enough shares, partial unstake check.
 2. **Calculate RNBW value** -- `rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares`.
-3. **Calculate exit fee** -- `exitFee = rnbwValue * exitFeeBps / 10,000`. Default: 15%.
-4. **Calculate net amount** -- `netAmount = rnbwValue - exitFee`.
-5. **Burn shares** -- Deduct from `shares[user]` and `totalShares`. Deduct only `netAmount` from `totalPooledRnbw`. The exit fee stays in the pool.
-6. **Residual sweep** -- If only dead shares remain (`totalShares == MINIMUM_SHARES`), sweep remaining `totalPooledRnbw` to `safe`, reset dead shares and `totalShares` to 0 (clean slate for next cycle).
-7. **Update metadata** -- Reset `stakingStartTime` to 0 if fully unstaked.
-8. **Transfer** -- Send `netAmount` RNBW to user. Sweep residual to safe if applicable.
+3. **Calculate exit fee** -- `exitFee = rnbwValue * exitFeeBps / 10,000` (ceil-rounded). Default: 15%.
+4. **Dust guard** -- If `netAmount == 0` (ceil rounding consumed entire amount), reverts with `ZeroUnstakeAmount`.
+5. **Calculate net amount** -- `netAmount = rnbwValue - exitFee`.
+6. **Burn shares** -- Deduct from `shares[user]` and `totalShares`. Deduct only `netAmount` from `totalPooledRnbw`. The exit fee stays in the pool.
+7. **Residual sweep** -- If only dead shares remain (`totalShares == MINIMUM_SHARES`), sweep remaining `totalPooledRnbw` to `safe`, reset dead shares and `totalShares` to 0 (clean slate for next cycle).
+8. **Update metadata** -- Reset `stakingStartTime` to 0 if fully unstaked. Track `totalRnbwUnstaked` and `totalExitFeePaid`.
+9. **Transfer** -- Send `netAmount` RNBW to user. Sweep residual to safe if applicable.
 
 **Example: Bob unstakes all his shares (exit fee redistributes to Alice)**
 
@@ -191,7 +207,7 @@ Pool after:     totalPooledRnbw = 0, totalShares = 0 (clean slate)
 
 **Entry point:** `allocateCashbackWithSignature(user, rnbwCashback, nonce, expiry, sig)` -- called by backend (any `msg.sender`, signature validated).
 
-**Prerequisites:** Contract must be pre-funded via `depositCashbackRewards(amount)` (admin). This adds RNBW to the `cashbackReserve`, which is tracked separately from the staking pool and protected from `emergencyWithdraw`.
+**Prerequisites:** Contract must be pre-funded via `fundCashbackReserve(amount)` (admin). This adds RNBW to the `cashbackReserve`, which is tracked separately from the staking pool and protected from `emergencyWithdraw`.
 
 Cashback mints shares **immediately in one step** -- no pending balance, no separate compound transaction.
 
@@ -202,9 +218,9 @@ Cashback mints shares **immediately in one step** -- no pending balance, no sepa
 3. **Check reserve** -- `rnbwCashback` must not exceed `cashbackReserve`.
 4. **Calculate shares** -- `sharesToMint = (rnbwCashback * totalShares) / totalPooledRnbw`.
 5. **Dust guard** -- If `sharesToMint` rounds to 0, reverts with `ZeroSharesMinted`. Backend should batch small amounts or retry later.
-6. **Mint shares** -- Update `shares[user]`, `totalShares`, `totalPooledRnbw`. Deduct from `cashbackReserve`.
+6. **Mint shares** -- Update `shares[user]`, `totalShares`, `totalPooledRnbw`. Deduct from `cashbackReserve`. Accumulate `totalCashbackReceived` and `totalCashbackAllocated`.
 
-No token transfer happens -- the RNBW is already in the contract from `depositCashbackRewards()`. The function moves it from `cashbackReserve` into `totalPooledRnbw` by minting shares.
+No token transfer happens -- the RNBW is already in the contract from `fundCashbackReserve()`. The function moves it from `cashbackReserve` into `totalPooledRnbw` by minting shares.
 
 **Example: Cashback after two swaps**
 
@@ -238,6 +254,206 @@ Each cashback allocation immediately increases Alice's shares. No separate compo
 | Exchange Rate | `getExchangeRate()` (scaled by 1e18) |
 | Shares (advanced) | `getPosition(user).userShares` |
 | Staking Since | `getPosition(user).stakingStartTime` |
+| Lifetime Cashback | `getPosition(user).totalCashbackReceived` |
+| Lifetime Staked | `getPosition(user).totalRnbwStaked` |
+| Lifetime Unstaked | `getPosition(user).totalRnbwUnstaked` (net, after exit fee) |
+| Lifetime Exit Fees | `getPosition(user).totalExitFeePaid` |
+| Preview Stake | `previewStake(amount)` → shares to mint |
+| Preview Unstake | `previewUnstake(shares)` → `(rnbwValue, exitFee, netReceived)` |
+
+---
+
+## APY Calculation (Off-Chain)
+
+APY is computed off-chain using on-chain state at two different blocks. No indexer required.
+
+### Industry Standard
+
+This is the same approach used by major staking protocols:
+
+| Protocol | Method | Window |
+|----------|--------|--------|
+| **Lido (stETH)** | `(postTotalEther/postTotalShares) / (preTotalEther/preTotalShares)` annualized | 7-day SMA of daily APR values |
+| **Rocket Pool (rETH)** | rETH exchange rate change over time, annualized | 7-day rolling |
+| **Coinbase (cbETH)** | cbETH exchange rate delta, annualized | 7-day rolling |
+
+All protocols use the same core idea: **compare the exchange rate at two points in time, annualize the difference**. The only variations are window size and smoothing (simple vs. weighted average).
+
+Lido exposes this via a public API (`/v1/protocol/steth/apr/sma`) that returns daily APR values and a 7-day simple moving average.
+
+### Data Sources
+
+| Component | What drives it | On-chain signal |
+|-----------|---------------|-----------------|
+| Exit Fee APY | Users unstaking (15% stays in pool) | `getExchangeRate()` increases |
+| Cashback APY | Cashback allocated to stakers | `totalCashbackAllocated` increases |
+
+Cashback does **not** move the exchange rate (shares and pool grow proportionally), so it must be tracked separately.
+
+### Reads (2 RPC calls at block A and block B)
+
+```javascript
+// Block A (7 days ago)
+const rateA     = await contract.getExchangeRate({ blockTag: blockA });
+const cashbackA = await contract.totalCashbackAllocated({ blockTag: blockA });
+const poolA     = await contract.totalPooledRnbw({ blockTag: blockA });
+const tsA       = (await provider.getBlock(blockA)).timestamp;
+
+// Block B (now)
+const rateB     = await contract.getExchangeRate({ blockTag: blockB });
+const cashbackB = await contract.totalCashbackAllocated({ blockTag: blockB });
+const tsB       = (await provider.getBlock(blockB)).timestamp;
+```
+
+### Formula
+
+```javascript
+const SECONDS_PER_YEAR = 365.25 * 86400; // 31_557_600
+const elapsed = tsB - tsA;
+
+// 1. Exit Fee APY (from exchange rate growth)
+const exitFeeApy = ((rateB / rateA) ** (SECONDS_PER_YEAR / elapsed) - 1) * 100;
+
+// 2. Cashback APY (from global counter delta)
+const cashbackApy = ((cashbackB - cashbackA) / poolA) * (SECONDS_PER_YEAR / elapsed) * 100;
+
+// 3. Total APY
+const totalApy = exitFeeApy + cashbackApy;
+```
+
+### Recommended Time Window
+
+Use **7-day rolling window** (industry standard used by Lido, Rocket Pool, Coinbase):
+
+| Window | Block gap (Base, 2s blocks) | Use case |
+|--------|---------------------------|----------|
+| 24 hours | ~43,200 blocks | Daily data point |
+| **7 days** | **~302,400 blocks** | **Primary displayed APY** |
+| 30 days | ~1,296,000 blocks | Secondary / long-term APY |
+
+7 days balances smoothness (avoids single-whale-unstake spikes) with responsiveness (reflects recent activity).
+
+```javascript
+const blockB = await provider.getBlockNumber();  // now
+const blockA = blockB - 302_400;                 // ~7 days ago on Base
+```
+
+### Per-User Lifetime P&L (from `UserMeta`)
+
+```javascript
+const position = await contract.getPosition(user);
+const meta     = await contract.userMeta(user);
+
+const currentValue = position.stakedAmount;
+
+// Total lifetime earnings
+const lifetimeEarnings =
+    currentValue
+    + meta.totalRnbwUnstaked
+    - meta.totalRnbwStaked
+    + meta.totalCashbackReceived;
+
+// Broken down
+const cashbackEarnings = meta.totalCashbackReceived;
+const exitFeesPaid     = meta.totalExitFeePaid;
+const exchangeRateGain = currentValue
+    + meta.totalRnbwUnstaked
+    + meta.totalExitFeePaid
+    - meta.totalRnbwStaked
+    - meta.totalCashbackReceived;
+```
+
+| Metric | Formula | Meaning |
+|--------|---------|---------|
+| Total APY | `exitFeeApy + cashbackApy` | Annualized return for stakers |
+| Exit Fee APY | `(rateB/rateA)^(year/elapsed) - 1` | Yield from other users unstaking |
+| Cashback APY | `(deltaCashback/pool) * (year/elapsed)` | Yield from cashback program |
+| Lifetime P&L | `currentValue + totalUnstaked - totalStaked + totalCashback` | User's all-time profit/loss |
+| Exchange Rate Gain | `P&L - cashbackEarnings` | Pure staking yield (exit fee redistribution) |
+
+---
+
+## Security Features
+
+- **Dead shares**: 1000 shares minted to `0xdead` on first deposit (prevents share inflation / first depositor attack)
+- **Cashback reserve**: Tracked separately from staking pool, cannot be accidentally drained by `emergencyWithdraw`
+- **Min stake floor**: `minStakeAmount` cannot be set below 1 RNBW (prevents dust griefing)
+- **Inflation guard**: `ZeroSharesMinted` revert protects depositors from rounding attacks
+- **Residual sweep**: When only dead shares remain, orphaned exit fees are swept to safe and pool is reset
+- **Exit fee rounding**: Ceiling division (`Math.mulDiv` with `Rounding.Ceil`) ensures fractional wei always favors the protocol
+- **Dust unstake guard**: `ZeroUnstakeAmount` revert prevents ceil-rounded exit fee from consuming 100% of a dust unstake
+- **2-step safe transfer**: `proposeSafe()` + `acceptSafe()` prevents admin transfer to wrong address (same pattern as OpenZeppelin `Ownable2Step`)
+- **Partial unstake toggle**: `allowPartialUnstake` (default: disabled) prevents users from partially withdrawing via contract calls when the product only supports full unstake
+- **Preview dust guard**: `previewStake()` returns 0 instead of reverting for dust amounts, preventing unexpected UI errors
+- **Batch size limit**: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve solvency check
+- **Rich error context**: User-facing errors include address and value params for debugging (see table below)
+
+### Custom Errors
+
+All user-facing errors include contextual parameters for off-chain debugging. Admin errors use bare selectors since `msg.sender` provides sufficient context.
+
+| Error | Parameters | Thrown in |
+|-------|-----------|-----------|
+| `NoStakePosition` | `(user)` | `_unstake`, `_allocateCashback` |
+| `InsufficientShares` | `(user, requested, available)` | `_unstake` |
+| `BelowMinimumStake` | `(user, amount, minRequired)` | `_stake` |
+| `ZeroSharesMinted` | `(user, amount)` | `_stake`, `_allocateCashback` |
+| `ZeroUnstakeAmount` | `(user, rnbwValue)` | `_unstake` |
+| `PartialUnstakeDisabled` | `(user, sharesToBurn, totalUserShares)` | `_unstake` |
+
+### Dead Shares Lifecycle
+
+Dead shares prevent the [share inflation / first depositor attack](https://docs.openzeppelin.com/contracts/5.x/erc4626#inflation-attack) (same pattern as UniswapV2 and OpenZeppelin ERC4626). The key design decision is that dead shares **do not accumulate** — they are always exactly 0 or 1000.
+
+**Why dead shares exist:**
+
+In a shares-based pool, an attacker can front-run the first depositor by staking 1 wei, then donating a large amount directly to the pool. This inflates the exchange rate so that the victim's deposit rounds down to 0 shares, effectively stealing their tokens. Minting 1000 shares to a burn address (`0xdead`) on the first stake makes this attack economically impractical — the attacker would need to donate ~1000x more to achieve the same rounding effect.
+
+**Lifecycle (3 phases):**
+
+```
+Phase 1: Empty pool (totalShares == 0)
+  → First stake triggers: shares[0xdead] += 1000, totalShares += 1000
+  → User gets: amount - 1000 shares
+  → Dead shares: 1000
+
+Phase 2: Active pool (multiple stakers)
+  → All subsequent stakes use: sharesToMint = (amount * totalShares) / totalPooledRnbw
+  → No dead shares minted (totalShares > 0, hits else branch)
+  → Dead shares: still 1000 (unchanged)
+
+Phase 3: Last user unstakes (totalShares == MINIMUM_SHARES)
+  → Residual sweep: totalPooledRnbw → safe, shares[0xdead] = 0, totalShares = 0
+  → Dead shares: 0 (reset to clean slate)
+  → Next staker re-enters Phase 1
+```
+
+**Invariant:** `totalShares == 0 ⟹ totalPooledRnbw == 0`. The residual sweep enforces this — without it, orphaned exit-fee RNBW would remain in the pool after all user shares are burned, creating an accounting desync where the next staker gets 1:1 share minting but the pool already holds leftover tokens.
+
+## Build
+
+```shell
+forge build
+```
+
+## Test
+
+```shell
+forge test
+```
+
+Unit tests (`RNBWStaking.t.sol`) and simulation tests (`RNBWStakingSimulation.t.sol`).
+
+```shell
+forge test -vvv                                          # verbose output
+forge test --match-contract RNBWStakingSimulation -vvv   # simulation only
+```
+
+## Format
+
+```shell
+forge fmt
+```
 
 ## Deployment
 
@@ -272,49 +488,6 @@ make deploy-production    # deploy to Base mainnet (confirmation prompt)
 make verify-staging ADDRESS=0x...     # verify on staging
 make verify-production ADDRESS=0x...  # verify on Basescan
 ```
-
-
-## Security Features
-
-- **Dead shares**: 1000 shares minted to `0xdead` on first deposit (prevents share inflation / first depositor attack)
-- **Cashback reserve**: Tracked separately from staking pool, cannot be accidentally drained by `emergencyWithdraw`
-- **Min stake floor**: `minStakeAmount` cannot be set below 1 RNBW (prevents dust griefing)
-- **Inflation guard**: `ZeroSharesMinted` revert protects depositors from rounding attacks
-- **Residual sweep**: When only dead shares remain, orphaned exit fees are swept to safe and pool is reset
-- **Exit fee rounding**: Ceiling division (`Math.mulDiv` with `Rounding.Ceil`) ensures fractional wei always favors the protocol
-- **Batch size limit**: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve solvency check
-
-## Build
-
-```shell
-forge build
-```
-
-## Test
-
-```shell
-forge test
-```
-
-63 tests across two suites: unit tests (`RNBWStaking.t.sol`) and simulation tests (`RNBWStakingSimulation.t.sol`).
-
-```shell
-forge test -vvv                                          # verbose output
-forge test --match-contract RNBWStakingSimulation -vvv   # simulation only
-```
-
-## Format
-
-```shell
-forge fmt
-```
-
-## Contracts
-
-| File | Description |
-|------|-------------|
-| `src/RNBWStaking.sol` | Main staking contract |
-| `src/interfaces/IRNBWStaking.sol` | Interface with events, errors, and function signatures |
 
 ## EIP-7702 Compatibility
 

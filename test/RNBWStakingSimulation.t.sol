@@ -6,6 +6,7 @@ import {RNBWStaking} from "../src/RNBWStaking.sol";
 import {IRNBWStaking} from "../src/interfaces/IRNBWStaking.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title RNBWStakingSimulation
@@ -39,6 +40,9 @@ contract RNBWStakingSimulation is Test {
         rnbwToken.mint(bob, 100_000 ether);
         rnbwToken.mint(charlie, 100_000 ether);
 
+        vm.prank(admin);
+        staking.setAllowPartialUnstake(true);
+
         console.log("=== SIMULATION SETUP COMPLETE ===");
     }
 
@@ -55,7 +59,7 @@ contract RNBWStakingSimulation is Test {
 
         console.log("STEP 2: On-chain execution complete");
 
-        (uint256 staked, uint256 shares,,) = staking.getPosition(alice);
+        (uint256 staked, uint256 shares,,,,,,) = staking.getPosition(alice);
         console.log("Alice staked amount:", staked / 1e18);
         console.log("Alice shares:", shares / 1e18);
         console.log("Total pooled:", staking.totalPooledRnbw() / 1e18);
@@ -97,7 +101,7 @@ contract RNBWStakingSimulation is Test {
         _logPosition("After Additional Stake", alice);
         console.log("=== CASHBACK FLOW COMPLETE ===");
 
-        (uint256 stakedFinal,,,) = staking.getPosition(alice);
+        (uint256 stakedFinal,,,,,,,) = staking.getPosition(alice);
         assertApproxEqAbs(stakedFinal, 50_000 ether + 500 ether + 1250 ether + 1000 ether, staking.MINIMUM_SHARES());
     }
 
@@ -114,14 +118,23 @@ contract RNBWStakingSimulation is Test {
         rnbwToken.mint(admin, amount);
         vm.startPrank(admin);
         rnbwToken.approve(address(staking), amount);
-        staking.depositCashbackRewards(amount);
+        staking.fundCashbackReserve(amount);
         vm.stopPrank();
         staking.allocateCashbackWithSignature(user, amount, allocateNonce, expiry, sig);
         allocateNonce++;
     }
 
     function _logPosition(string memory label, address user) internal view {
-        (uint256 staked, uint256 userShares, uint256 lastUpdate, uint256 stakingStart) = staking.getPosition(user);
+        (
+            uint256 staked,
+            uint256 userShares,
+            uint256 lastUpdate,
+            uint256 stakingStart,
+            uint256 cashbackReceived,
+            uint256 rnbwStaked,
+            uint256 rnbwUnstaked,
+            uint256 exitFeePaid
+        ) = staking.getPosition(user);
         console.log("---", label, "---");
         console.log("Staked RNBW:", staked / 1e18);
         console.log("Shares:", userShares / 1e18);
@@ -130,6 +143,10 @@ contract RNBWStakingSimulation is Test {
         console.log("Total shares:", staking.totalShares() / 1e18);
         console.log("Staking start:", stakingStart);
         console.log("Last update:", lastUpdate);
+        console.log("Lifetime cashback:", cashbackReceived / 1e18);
+        console.log("Lifetime staked:", rnbwStaked / 1e18);
+        console.log("Lifetime unstaked:", rnbwUnstaked / 1e18);
+        console.log("Lifetime exit fees:", exitFeePaid / 1e18);
         console.log("");
     }
 
@@ -150,14 +167,14 @@ contract RNBWStakingSimulation is Test {
         console.log("Bob staked: 50,000 RNBW");
         console.log("Total pooled:", staking.totalPooledRnbw() / 1e18);
 
-        (uint256 aliceBefore,,,) = staking.getPosition(alice);
+        (uint256 aliceBefore,,,,,,,) = staking.getPosition(alice);
         console.log("Alice value before Bob unstakes:", aliceBefore / 1e18);
 
         console.log("Bob unstakes all 50,000 shares...");
         vm.prank(bob);
         staking.unstake(50_000 ether);
 
-        (uint256 aliceAfter,,,) = staking.getPosition(alice);
+        (uint256 aliceAfter,,,,,,,) = staking.getPosition(alice);
         console.log("Alice value after Bob unstakes:", aliceAfter / 1e18);
         console.log("Alice gained:", (aliceAfter - aliceBefore) / 1e18);
         console.log("Exchange rate:", staking.getExchangeRate());
@@ -199,8 +216,8 @@ contract RNBWStakingSimulation is Test {
         staking.unstake(15_000 ether);
 
         console.log("PHASE 5: Final state");
-        (uint256 aliceFinal,,,) = staking.getPosition(alice);
-        (uint256 bobFinal,,,) = staking.getPosition(bob);
+        (uint256 aliceFinal,,,,,,,) = staking.getPosition(alice);
+        (uint256 bobFinal,,,,,,,) = staking.getPosition(bob);
         console.log("Alice final:", aliceFinal / 1e18);
         console.log("Bob final:", bobFinal / 1e18);
         console.log("Total pooled:", staking.totalPooledRnbw() / 1e18);
@@ -271,7 +288,7 @@ contract RNBWStakingSimulation is Test {
         _allocateCashback(alice, 2000 ether);
         uint256 sharesAfter = staking.shares(alice);
 
-        (uint256 stakedAfter,,,) = staking.getPosition(alice);
+        (uint256 stakedAfter,,,,,,,) = staking.getPosition(alice);
         console.log("Shares before cashback:", sharesBefore / 1e18);
         console.log("Shares after cashback:", sharesAfter / 1e18);
         console.log("Staked after cashback:", stakedAfter / 1e18);
@@ -309,10 +326,10 @@ contract RNBWStakingSimulation is Test {
         rnbwToken.mint(admin, 1);
         vm.startPrank(admin);
         rnbwToken.approve(address(staking), 1);
-        staking.depositCashbackRewards(1);
+        staking.fundCashbackReserve(1);
         vm.stopPrank();
 
-        vm.expectRevert(IRNBWStaking.ZeroSharesMinted.selector);
+        vm.expectRevert(abi.encodeWithSelector(IRNBWStaking.ZeroSharesMinted.selector, alice, uint256(1)));
         staking.allocateCashbackWithSignature(alice, 1, allocateNonce, expiry, sig);
 
         console.log("Dust cashback (1 wei) correctly reverted with ZeroSharesMinted");
@@ -334,7 +351,7 @@ contract RNBWStakingSimulation is Test {
         rnbwToken.mint(admin, 1000 ether);
         vm.startPrank(admin);
         rnbwToken.approve(address(staking), 1000 ether);
-        staking.depositCashbackRewards(1000 ether);
+        staking.fundCashbackReserve(1000 ether);
         vm.stopPrank();
 
         bytes32 structHash =
@@ -365,7 +382,7 @@ contract RNBWStakingSimulation is Test {
         rnbwToken.mint(admin, 500 ether);
         vm.startPrank(admin);
         rnbwToken.approve(address(staking), 500 ether);
-        staking.depositCashbackRewards(500 ether);
+        staking.fundCashbackReserve(500 ether);
         vm.stopPrank();
 
         uint256 nonce = 500;
@@ -442,8 +459,8 @@ contract RNBWStakingSimulation is Test {
         console.log("Exchange rate before:", rateBefore);
         console.log("Exchange rate after:", rateAfter);
 
-        (uint256 aliceVal,,,) = staking.getPosition(alice);
-        (uint256 bobVal,,,) = staking.getPosition(bob);
+        (uint256 aliceVal,,,,,,,) = staking.getPosition(alice);
+        (uint256 bobVal,,,,,,,) = staking.getPosition(bob);
         console.log("Alice value:", aliceVal / 1e18);
         console.log("Bob value:", bobVal / 1e18);
         console.log("=== FEE DISTRIBUTED PROPORTIONALLY ===");
@@ -451,5 +468,165 @@ contract RNBWStakingSimulation is Test {
         assertGt(rateAfter, rateBefore);
         assertGt(aliceVal, 40_000 ether);
         assertGt(bobVal, 30_000 ether);
+    }
+
+    function test_Simulation_APYCalculation() public {
+        console.log("");
+        console.log("=== APY CALCULATION SIMULATION ===");
+        console.log("");
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 50_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 50_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        console.log("SETUP: Alice 50k, Bob 50k staked");
+
+        uint256 rateA = staking.getExchangeRate();
+        uint256 cashbackA = staking.totalCashbackAllocated();
+        uint256 poolA = staking.totalPooledRnbw();
+        uint256 tsA = block.timestamp;
+
+        console.log("--- Snapshot A (T=0) ---");
+        console.log("Exchange rate:", rateA);
+        console.log("totalCashbackAllocated:", cashbackA / 1e18);
+        console.log("totalPooledRnbw:", poolA / 1e18);
+
+        vm.warp(block.timestamp + 1 days);
+
+        uint256 bobShares = staking.shares(bob);
+        vm.prank(bob);
+        staking.unstake(bobShares);
+        console.log("Day 1: Bob unstakes all (15% exit fee stays in pool)");
+
+        vm.warp(block.timestamp + 1 days);
+
+        _allocateCashback(alice, 2000 ether);
+        console.log("Day 2: 2,000 RNBW cashback allocated to Alice");
+
+        vm.warp(block.timestamp + 5 days);
+        console.log("Day 7: 5 more days pass");
+
+        uint256 rateB = staking.getExchangeRate();
+        uint256 cashbackB = staking.totalCashbackAllocated();
+        uint256 tsB = block.timestamp;
+
+        console.log("");
+        console.log("--- Snapshot B (T=7 days) ---");
+        console.log("Exchange rate:", rateB);
+        console.log("totalCashbackAllocated:", cashbackB / 1e18);
+
+        uint256 secondsPerYear = 365.25 days;
+        uint256 elapsed = tsB - tsA;
+
+        uint256 exitFeeAprBps = ((rateB - rateA) * 10_000 * secondsPerYear) / (rateA * elapsed);
+        uint256 cashbackAprBps = ((cashbackB - cashbackA) * 10_000 * secondsPerYear) / (poolA * elapsed);
+        uint256 totalAprBps = exitFeeAprBps + cashbackAprBps;
+
+        console.log("");
+        console.log("--- APY RESULTS (basis points, 100 = 1%) ---");
+        console.log("Exit Fee APR (bps):", exitFeeAprBps);
+        console.log("Cashback APR (bps):", cashbackAprBps);
+        console.log("Total APR (bps):", totalAprBps);
+        console.log("Exit Fee APR%:", exitFeeAprBps / 100);
+        console.log("Cashback APR%:", cashbackAprBps / 100);
+        console.log("Total APR%:", totalAprBps / 100);
+
+        assertGt(exitFeeAprBps, 0);
+        assertGt(cashbackAprBps, 0);
+        assertGt(totalAprBps, exitFeeAprBps);
+        assertGt(totalAprBps, cashbackAprBps);
+
+        console.log("");
+        console.log("=== APY CALCULATION VERIFIED ===");
+    }
+
+    function test_Simulation_LifetimePnL() public {
+        console.log("");
+        console.log("=== LIFETIME P&L SIMULATION ===");
+        console.log("");
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 60_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 50_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        console.log("PHASE 1: Alice stakes 50k, Bob stakes 50k");
+
+        _allocateCashback(alice, 3000 ether);
+        console.log("PHASE 2: 3,000 RNBW cashback to Alice");
+
+        uint256 bobShares = staking.shares(bob);
+        vm.prank(bob);
+        staking.unstake(bobShares);
+        console.log("PHASE 3: Bob unstakes all (exit fee boosts Alice)");
+
+        vm.startPrank(alice);
+        staking.stake(10_000 ether);
+        vm.stopPrank();
+        console.log("PHASE 4: Alice stakes another 10k");
+
+        uint256 aliceShares = staking.shares(alice);
+        uint256 halfShares = aliceShares / 2;
+        vm.prank(alice);
+        staking.unstake(halfShares);
+        console.log("PHASE 5: Alice unstakes half her position");
+
+        (
+            uint256 currentValue,,,,
+            uint256 cashbackReceived,
+            uint256 totalStaked,
+            uint256 totalUnstaked,
+            uint256 exitFeePaid
+        ) = staking.getPosition(alice);
+
+        int256 iCurrentValue = SafeCast.toInt256(currentValue);
+        int256 iTotalUnstaked = SafeCast.toInt256(totalUnstaked);
+        int256 iTotalStaked = SafeCast.toInt256(totalStaked);
+        int256 iCashbackReceived = SafeCast.toInt256(cashbackReceived);
+        int256 iExitFeePaid = SafeCast.toInt256(exitFeePaid);
+
+        int256 lifetimeEarnings = iCurrentValue + iTotalUnstaked - iTotalStaked + iCashbackReceived;
+        int256 exchangeRateGain = iCurrentValue + iTotalUnstaked + iExitFeePaid - iTotalStaked - iCashbackReceived;
+
+        console.log("");
+        console.log("--- ALICE LIFETIME P&L ---");
+        console.log("Current staked value:", currentValue / 1e18);
+        console.log("Lifetime RNBW staked:", totalStaked / 1e18);
+        console.log("Lifetime RNBW unstaked:", totalUnstaked / 1e18);
+        console.log("Lifetime cashback:", cashbackReceived / 1e18);
+        console.log("Lifetime exit fees paid:", exitFeePaid / 1e18);
+        console.log("");
+
+        if (lifetimeEarnings >= 0) {
+            console.log("Lifetime earnings:", SafeCast.toUint256(lifetimeEarnings) / 1e18);
+        } else {
+            console.log("Lifetime loss:", SafeCast.toUint256(-lifetimeEarnings) / 1e18);
+        }
+
+        if (exchangeRateGain >= 0) {
+            console.log("Exchange rate gain:", SafeCast.toUint256(exchangeRateGain) / 1e18);
+        } else {
+            console.log("Exchange rate loss:", SafeCast.toUint256(-exchangeRateGain) / 1e18);
+        }
+
+        assertGt(lifetimeEarnings, 0);
+        assertEq(totalStaked, 60_000 ether);
+        assertEq(cashbackReceived, 3000 ether);
+        assertGt(totalUnstaked, 0);
+        assertGt(exitFeePaid, 0);
+
+        console.log("");
+        console.log("=== LIFETIME P&L VERIFIED ===");
     }
 }
