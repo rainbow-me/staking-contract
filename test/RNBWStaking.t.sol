@@ -28,6 +28,9 @@ contract RNBWStakingTest is Test {
 
         rnbwToken.mint(alice, INITIAL_BALANCE);
         rnbwToken.mint(bob, INITIAL_BALANCE);
+
+        vm.prank(admin);
+        staking.setAllowPartialUnstake(true);
     }
 
     function _signAllocateCashback(address user, uint256 rnbwCashback, uint256 nonce, uint256 expiry)
@@ -144,6 +147,69 @@ contract RNBWStakingTest is Test {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IRNBWStaking.NoStakePosition.selector, alice));
         staking.unstake(100 ether);
+    }
+
+    function test_PartialUnstakeDisabled() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(admin);
+        staking.setAllowPartialUnstake(false);
+        assertEq(staking.allowPartialUnstake(), false);
+
+        uint256 aliceShares = staking.shares(alice);
+        uint256 halfShares = aliceShares / 2;
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IRNBWStaking.PartialUnstakeDisabled.selector, alice, halfShares, aliceShares)
+        );
+        staking.unstake(halfShares);
+
+        vm.prank(alice);
+        staking.unstake(aliceShares);
+        assertEq(staking.shares(alice), 0);
+    }
+
+    function test_PartialUnstakeReEnabled() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(admin);
+        staking.setAllowPartialUnstake(false);
+
+        vm.prank(admin);
+        staking.setAllowPartialUnstake(true);
+
+        uint256 halfShares = staking.shares(alice) / 2;
+        vm.prank(alice);
+        staking.unstake(halfShares);
+        assertGt(staking.shares(alice), 0);
+    }
+
+    function test_SetAllowPartialUnstakeRevertNoChange() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.NoChange.selector);
+        staking.setAllowPartialUnstake(true);
+    }
+
+    function test_SetAllowPartialUnstakeRevertNoChangeWhenDisabled() public {
+        vm.prank(admin);
+        staking.setAllowPartialUnstake(false);
+
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.NoChange.selector);
+        staking.setAllowPartialUnstake(false);
+    }
+
+    function test_SetAllowPartialUnstakeRevertUnauthorized() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.setAllowPartialUnstake(false);
     }
 
     function test_UnstakeExitFee() public {
@@ -747,5 +813,73 @@ contract RNBWStakingTest is Test {
         (,,,, uint256 bobCashback,,,) = staking.getPosition(bob);
         assertEq(aliceCashback, 5 ether);
         assertEq(bobCashback, 3 ether);
+    }
+
+    function test_UnstakeAll() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        uint256 aliceShares = staking.shares(alice);
+        assertGt(aliceShares, 0);
+
+        staking.unstakeAll();
+        vm.stopPrank();
+
+        assertEq(staking.shares(alice), 0);
+    }
+
+    function test_UnstakeAllRevertNoPosition() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
+        staking.unstakeAll();
+    }
+
+    function test_PreviewUnstake() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 aliceShares = staking.shares(alice);
+        (uint256 rnbwValue, uint256 exitFee, uint256 netReceived) = staking.previewUnstake(aliceShares);
+
+        assertGt(rnbwValue, 0);
+        assertGt(exitFee, 0);
+        assertEq(netReceived, rnbwValue - exitFee);
+
+        uint256 balBefore = rnbwToken.balanceOf(alice);
+        vm.prank(alice);
+        staking.unstakeAll();
+        uint256 balAfter = rnbwToken.balanceOf(alice);
+
+        assertEq(balAfter - balBefore, netReceived);
+    }
+
+    function test_PreviewStake() public {
+        uint256 preview = staking.previewStake(100 ether);
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        assertEq(staking.shares(alice), preview);
+    }
+
+    function test_PreviewStakeAfterExitFee() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        staking.unstakeAll();
+        vm.stopPrank();
+
+        uint256 preview = staking.previewStake(50 ether);
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 50 ether);
+        staking.stake(50 ether);
+        vm.stopPrank();
+
+        assertEq(staking.shares(bob), preview);
     }
 }

@@ -56,6 +56,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     address public pendingSafe;
     uint256 public exitFeeBps;
     uint256 public minStakeAmount;
+    bool public allowPartialUnstake;
 
     // --- Pool ---
     mapping(address => uint256) public shares;
@@ -89,6 +90,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
         exitFeeBps = 1500;
         minStakeAmount = 1e18;
+        allowPartialUnstake = false;
 
         _trustedSigners[_initialSigner] = true;
         trustedSignerCount = 1;
@@ -120,6 +122,11 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @inheritdoc IRNBWStaking
     function unstake(uint256 sharesToBurn) external nonReentrant whenNotPaused {
         _unstake(msg.sender, sharesToBurn);
+    }
+
+    /// @inheritdoc IRNBWStaking
+    function unstakeAll() external nonReentrant whenNotPaused {
+        _unstake(msg.sender, shares[msg.sender]);
     }
 
     /// @inheritdoc IRNBWStaking
@@ -208,6 +215,26 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function getExchangeRate() external view returns (uint256) {
         if (totalShares == 0) return 1e18;
         return (totalPooledRnbw * 1e18) / totalShares;
+    }
+
+    /// @inheritdoc IRNBWStaking
+    function previewUnstake(uint256 sharesToBurn)
+        external
+        view
+        returns (uint256 rnbwValue, uint256 exitFee, uint256 netReceived)
+    {
+        rnbwValue = getRnbwForShares(sharesToBurn);
+        exitFee = Math.mulDiv(rnbwValue, exitFeeBps, BASIS_POINTS, Math.Rounding.Ceil);
+        netReceived = rnbwValue - exitFee;
+    }
+
+    /// @inheritdoc IRNBWStaking
+    function previewStake(uint256 amount) external view returns (uint256 sharesToMint) {
+        if (totalShares == 0) {
+            sharesToMint = amount - MINIMUM_SHARES;
+        } else {
+            sharesToMint = (amount * totalShares) / totalPooledRnbw;
+        }
     }
 
     /// @inheritdoc IRNBWStaking
@@ -314,6 +341,13 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         emit MinStakeAmountUpdated(oldMinStakeAmount, newMinStakeAmount);
     }
 
+    /// @inheritdoc IRNBWStaking
+    function setAllowPartialUnstake(bool allowed) external onlySafe {
+        if (allowed == allowPartialUnstake) revert NoChange();
+        allowPartialUnstake = allowed;
+        emit PartialUnstakeToggled(allowed);
+    }
+
     /*//////////////////////////////////////////////////////////////
                            INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -417,6 +451,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (sharesToBurn == 0) revert ZeroAmount();
         if (shares[user] == 0) revert NoStakePosition(user);
         if (shares[user] < sharesToBurn) revert InsufficientShares(user, sharesToBurn, shares[user]);
+        if (!allowPartialUnstake && sharesToBurn != shares[user]) {
+            revert PartialUnstakeDisabled(user, sharesToBurn, shares[user]);
+        }
 
         // 2. Calculate RNBW value of shares at current exchange rate
         //    Formula: rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares
