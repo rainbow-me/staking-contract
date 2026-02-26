@@ -472,7 +472,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    This increases exchange rate for remaining stakers
         shares[user] -= sharesToBurn;
         totalShares -= sharesToBurn;
-        totalPooledRnbw -= netAmount; // exitFee remains in pool!
+        totalPooledRnbw -= netAmount;
 
         // 5. Reset totalPooledRnbw when all shares are burned to prevent
         //    share inflation attack. Without this, orphaned exit-fee RNBW
