@@ -451,13 +451,6 @@ forge test --match-contract RNBWStakingSimulation -vvv   # simulation only
 forge fmt
 ```
 
-## Contracts
-
-| File | Description |
-|------|-------------|
-| `src/RNBWStaking.sol` | Main staking contract |
-| `src/interfaces/IRNBWStaking.sol` | Interface with events, errors, and function signatures |
-
 ## EIP-7702 Compatibility
 
 The contract is compatible with EIP-7702 (account abstraction via code delegation). `stake()` and `unstake()` use `msg.sender`, so a 7702-delegated EOA can call them directly through its delegated code. These functions also work with Gelato Turbo Relayer and Relay.link, which use smart account patterns where `msg.sender` is the user's address. `allocateCashbackWithSignature()` works with any `msg.sender` since it validates the trusted backend signer, not the caller.
