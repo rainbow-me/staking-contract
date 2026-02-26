@@ -465,4 +465,163 @@ contract RNBWStakingSimulation is Test {
         assertGt(aliceVal, 40_000 ether);
         assertGt(bobVal, 30_000 ether);
     }
+
+    function test_Simulation_APYCalculation() public {
+        console.log("");
+        console.log("=== APY CALCULATION SIMULATION ===");
+        console.log("");
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 50_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 50_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        console.log("SETUP: Alice 50k, Bob 50k staked");
+
+        uint256 rateA = staking.getExchangeRate();
+        uint256 cashbackA = staking.totalCashbackAllocated();
+        uint256 poolA = staking.totalPooledRnbw();
+        uint256 tsA = block.timestamp;
+
+        console.log("--- Snapshot A (T=0) ---");
+        console.log("Exchange rate:", rateA);
+        console.log("totalCashbackAllocated:", cashbackA / 1e18);
+        console.log("totalPooledRnbw:", poolA / 1e18);
+
+        vm.warp(block.timestamp + 1 days);
+
+        uint256 bobShares = staking.shares(bob);
+        vm.prank(bob);
+        staking.unstake(bobShares);
+        console.log("Day 1: Bob unstakes all (15% exit fee stays in pool)");
+
+        vm.warp(block.timestamp + 1 days);
+
+        _allocateCashback(alice, 2_000 ether);
+        console.log("Day 2: 2,000 RNBW cashback allocated to Alice");
+
+        vm.warp(block.timestamp + 5 days);
+        console.log("Day 7: 5 more days pass");
+
+        uint256 rateB = staking.getExchangeRate();
+        uint256 cashbackB = staking.totalCashbackAllocated();
+        uint256 tsB = block.timestamp;
+
+        console.log("");
+        console.log("--- Snapshot B (T=7 days) ---");
+        console.log("Exchange rate:", rateB);
+        console.log("totalCashbackAllocated:", cashbackB / 1e18);
+
+        uint256 SECONDS_PER_YEAR = 365.25 days;
+        uint256 elapsed = tsB - tsA;
+
+        uint256 exitFeeAprBps = ((rateB - rateA) * 10_000 * SECONDS_PER_YEAR) / (rateA * elapsed);
+        uint256 cashbackAprBps = ((cashbackB - cashbackA) * 10_000 * SECONDS_PER_YEAR) / (poolA * elapsed);
+        uint256 totalAprBps = exitFeeAprBps + cashbackAprBps;
+
+        console.log("");
+        console.log("--- APY RESULTS (basis points, 100 = 1%) ---");
+        console.log("Exit Fee APR (bps):", exitFeeAprBps);
+        console.log("Cashback APR (bps):", cashbackAprBps);
+        console.log("Total APR (bps):", totalAprBps);
+        console.log("Exit Fee APR%:", exitFeeAprBps / 100);
+        console.log("Cashback APR%:", cashbackAprBps / 100);
+        console.log("Total APR%:", totalAprBps / 100);
+
+        assertGt(exitFeeAprBps, 0);
+        assertGt(cashbackAprBps, 0);
+        assertGt(totalAprBps, exitFeeAprBps);
+        assertGt(totalAprBps, cashbackAprBps);
+
+        console.log("");
+        console.log("=== APY CALCULATION VERIFIED ===");
+    }
+
+    function test_Simulation_LifetimePnL() public {
+        console.log("");
+        console.log("=== LIFETIME P&L SIMULATION ===");
+        console.log("");
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 60_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 50_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        console.log("PHASE 1: Alice stakes 50k, Bob stakes 50k");
+
+        _allocateCashback(alice, 3_000 ether);
+        console.log("PHASE 2: 3,000 RNBW cashback to Alice");
+
+        uint256 bobShares = staking.shares(bob);
+        vm.prank(bob);
+        staking.unstake(bobShares);
+        console.log("PHASE 3: Bob unstakes all (exit fee boosts Alice)");
+
+        vm.startPrank(alice);
+        staking.stake(10_000 ether);
+        vm.stopPrank();
+        console.log("PHASE 4: Alice stakes another 10k");
+
+        uint256 aliceShares = staking.shares(alice);
+        uint256 halfShares = aliceShares / 2;
+        vm.prank(alice);
+        staking.unstake(halfShares);
+        console.log("PHASE 5: Alice unstakes half her position");
+
+        (
+            uint256 currentValue,
+            ,,,
+            uint256 cashbackReceived,
+            uint256 totalStaked,
+            uint256 totalUnstaked,
+            uint256 exitFeePaid
+        ) = staking.getPosition(alice);
+
+        int256 lifetimeEarnings =
+            int256(currentValue) + int256(totalUnstaked) - int256(totalStaked) + int256(cashbackReceived);
+
+        int256 exchangeRateGain =
+            int256(currentValue) + int256(totalUnstaked) + int256(exitFeePaid) - int256(totalStaked)
+            - int256(cashbackReceived);
+
+        console.log("");
+        console.log("--- ALICE LIFETIME P&L ---");
+        console.log("Current staked value:", currentValue / 1e18);
+        console.log("Lifetime RNBW staked:", totalStaked / 1e18);
+        console.log("Lifetime RNBW unstaked:", totalUnstaked / 1e18);
+        console.log("Lifetime cashback:", cashbackReceived / 1e18);
+        console.log("Lifetime exit fees paid:", exitFeePaid / 1e18);
+        console.log("");
+
+        if (lifetimeEarnings >= 0) {
+            console.log("Lifetime earnings:", uint256(lifetimeEarnings) / 1e18);
+        } else {
+            console.log("Lifetime loss:", uint256(-lifetimeEarnings) / 1e18);
+        }
+
+        if (exchangeRateGain >= 0) {
+            console.log("Exchange rate gain:", uint256(exchangeRateGain) / 1e18);
+        } else {
+            console.log("Exchange rate loss:", uint256(-exchangeRateGain) / 1e18);
+        }
+
+        assertGt(lifetimeEarnings, 0);
+        assertEq(totalStaked, 60_000 ether);
+        assertEq(cashbackReceived, 3_000 ether);
+        assertGt(totalUnstaked, 0);
+        assertGt(exitFeePaid, 0);
+
+        console.log("");
+        console.log("=== LIFETIME P&L VERIFIED ===");
+    }
 }
