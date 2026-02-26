@@ -60,12 +60,12 @@ Any `msg.sender` can submit these transactions (relayer, bot, user). The contrac
 
 | Function | Returns |
 |----------|---------|
-| `getPosition(user)` | `(stakedAmount, userShares, lastUpdateTime, stakingStartTime)` |
+| `getPosition(user)` | `(stakedAmount, userShares, lastUpdateTime, stakingStartTime, totalCashbackReceived, totalRnbwStaked, totalRnbwUnstaked, totalExitFeePaid)` |
 | `getRnbwForShares(sharesAmount)` | RNBW value at current exchange rate |
 | `getSharesForRnbw(rnbwAmount)` | Share equivalent at current exchange rate |
 | `getExchangeRate()` | Current exchange rate scaled by 1e18 |
+| `previewStake(amount)` | `sharesToMint` -- preview shares from staking (returns 0 for dust amounts) |
 | `previewUnstake(sharesToBurn)` | `(rnbwValue, exitFee, netReceived)` -- preview unstake outcome |
-| `previewStake(amount)` | `sharesToMint` -- preview shares from staking |
 | `isNonceUsed(user, nonce)` | Whether a cashback nonce has been used |
 | `domainSeparator()` | EIP-712 domain separator |
 | `isTrustedSigner(signer)` | Whether an address is a trusted signer |
@@ -91,6 +91,8 @@ The first staker gets shares at a 1:1 ratio (minus 1000 dead shares for inflatio
 
 **Entry point:** `stake(amount)` -- user calls directly or via relay service (Gelato Turbo, Relay.link, EIP-7702). `msg.sender` is always the user.
 
+**Preview:** Call `previewStake(amount)` to get `sharesToMint` before submitting. Returns 0 for dust amounts (< 1000 wei on empty pool).
+
 **Steps:**
 
 1. **Validate** -- amount must be > 0. First-time stakers must meet `minStakeAmount` (default 1 RNBW, floor 1 RNBW, max 1M RNBW).
@@ -98,7 +100,7 @@ The first staker gets shares at a 1:1 ratio (minus 1000 dead shares for inflatio
 3. **Calculate shares** -- `sharesToMint = (amount * totalShares) / totalPooledRnbw`. If pool is empty (first staker): `sharesToMint = amount - MINIMUM_SHARES`, and 1000 dead shares are minted to `0xdead`.
 4. **Inflation guard** -- If `sharesToMint` rounds to 0 (manipulated exchange rate), the transaction reverts with `ZeroSharesMinted`.
 5. **Mint shares** -- Update `shares[user]`, `totalShares`, `totalPooledRnbw`.
-6. **Update metadata** -- Set `stakingStartTime` (first stake only), update `lastUpdateTime`.
+6. **Update metadata** -- Set `stakingStartTime` (first stake only), update `lastUpdateTime`, accumulate `totalRnbwStaked`.
 
 **Example: Two users stake into an empty pool**
 
@@ -135,20 +137,29 @@ Charlie receives fewer shares because each share is now worth more than 1 RNBW.
 
 ### Unstaking Flow
 
-**Entry point:** `unstake(sharesToBurn)` -- user calls directly or via relay service. `msg.sender` is always the user.
+**Entry points:**
+- `unstake(sharesToBurn)` -- burn specific number of shares. Subject to partial unstake toggle.
+- `unstakeAll()` -- burn all caller's shares. Always allowed regardless of partial unstake setting.
 
-**Important:** The parameter is **shares to burn**, not RNBW amount. The UI should convert a desired RNBW amount to shares: `sharesToBurn = getSharesForRnbw(desiredAmount)`. For full unstake, use `shares[user]`.
+`msg.sender` is always the user (works with relay services).
+
+**Partial unstake toggle:** By default, partial unstake is **disabled** (`allowPartialUnstake = false`). When disabled, `unstake()` only accepts `sharesToBurn == shares[user]` (full unstake). The admin can enable partial unstake via `setAllowPartialUnstake(true)`. `unstakeAll()` is always available regardless of this setting.
+
+**Important:** The parameter is **shares to burn**, not RNBW amount. The UI should convert a desired RNBW amount to shares: `sharesToBurn = getSharesForRnbw(desiredAmount)`. For full unstake, use `unstakeAll()` or `shares[user]`.
+
+**Preview:** Call `previewUnstake(sharesToBurn)` to get `(rnbwValue, exitFee, netReceived)` before submitting.
 
 **Steps:**
 
-1. **Validate** -- shares > 0, user has enough shares.
+1. **Validate** -- shares > 0, user has enough shares, partial unstake check.
 2. **Calculate RNBW value** -- `rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares`.
-3. **Calculate exit fee** -- `exitFee = rnbwValue * exitFeeBps / 10,000`. Default: 15%.
-4. **Calculate net amount** -- `netAmount = rnbwValue - exitFee`.
-5. **Burn shares** -- Deduct from `shares[user]` and `totalShares`. Deduct only `netAmount` from `totalPooledRnbw`. The exit fee stays in the pool.
-6. **Residual sweep** -- If only dead shares remain (`totalShares == MINIMUM_SHARES`), sweep remaining `totalPooledRnbw` to `safe`, reset dead shares and `totalShares` to 0 (clean slate for next cycle).
-7. **Update metadata** -- Reset `stakingStartTime` to 0 if fully unstaked.
-8. **Transfer** -- Send `netAmount` RNBW to user. Sweep residual to safe if applicable.
+3. **Calculate exit fee** -- `exitFee = rnbwValue * exitFeeBps / 10,000` (ceil-rounded). Default: 15%.
+4. **Dust guard** -- If `netAmount == 0` (ceil rounding consumed entire amount), reverts with `ZeroUnstakeAmount`.
+5. **Calculate net amount** -- `netAmount = rnbwValue - exitFee`.
+6. **Burn shares** -- Deduct from `shares[user]` and `totalShares`. Deduct only `netAmount` from `totalPooledRnbw`. The exit fee stays in the pool.
+7. **Residual sweep** -- If only dead shares remain (`totalShares == MINIMUM_SHARES`), sweep remaining `totalPooledRnbw` to `safe`, reset dead shares and `totalShares` to 0 (clean slate for next cycle).
+8. **Update metadata** -- Reset `stakingStartTime` to 0 if fully unstaked. Track `totalRnbwUnstaked` and `totalExitFeePaid`.
+9. **Transfer** -- Send `netAmount` RNBW to user. Sweep residual to safe if applicable.
 
 **Example: Bob unstakes all his shares (exit fee redistributes to Alice)**
 
@@ -207,7 +218,7 @@ Cashback mints shares **immediately in one step** -- no pending balance, no sepa
 3. **Check reserve** -- `rnbwCashback` must not exceed `cashbackReserve`.
 4. **Calculate shares** -- `sharesToMint = (rnbwCashback * totalShares) / totalPooledRnbw`.
 5. **Dust guard** -- If `sharesToMint` rounds to 0, reverts with `ZeroSharesMinted`. Backend should batch small amounts or retry later.
-6. **Mint shares** -- Update `shares[user]`, `totalShares`, `totalPooledRnbw`. Deduct from `cashbackReserve`.
+6. **Mint shares** -- Update `shares[user]`, `totalShares`, `totalPooledRnbw`. Deduct from `cashbackReserve`. Accumulate `totalCashbackReceived` and `totalCashbackAllocated`.
 
 No token transfer happens -- the RNBW is already in the contract from `fundCashbackReserve()`. The function moves it from `cashbackReserve` into `totalPooledRnbw` by minting shares.
 
@@ -243,6 +254,12 @@ Each cashback allocation immediately increases Alice's shares. No separate compo
 | Exchange Rate | `getExchangeRate()` (scaled by 1e18) |
 | Shares (advanced) | `getPosition(user).userShares` |
 | Staking Since | `getPosition(user).stakingStartTime` |
+| Lifetime Cashback | `getPosition(user).totalCashbackReceived` |
+| Lifetime Staked | `getPosition(user).totalRnbwStaked` |
+| Lifetime Unstaked | `getPosition(user).totalRnbwUnstaked` (net, after exit fee) |
+| Lifetime Exit Fees | `getPosition(user).totalExitFeePaid` |
+| Preview Stake | `previewStake(amount)` → shares to mint |
+| Preview Unstake | `previewUnstake(shares)` → `(rnbwValue, exitFee, netReceived)` |
 
 ---
 
@@ -356,41 +373,6 @@ const exchangeRateGain = currentValue
 
 ---
 
-## Deployment
-
-### Environment Variables
-
-Copy the appropriate example file and fill in values:
-
-```shell
-cp .env.staging.example .env.staging    # for staging (Tenderly Virtual TestNet)
-cp .env.production.example .env.production  # for production (Base mainnet)
-```
-
-| Variable | Description |
-|----------|-------------|
-| `RPC_URL` | RPC endpoint (Tenderly for staging, `https://mainnet.base.org` for production) |
-| `PRIVATE_KEY` | Deployer wallet private key |
-| `ETHERSCAN_API_KEY` | Tenderly access token (staging) or Basescan API key (production) |
-| `RNBW_TOKEN` | RNBW ERC20 token contract address |
-| `SAFE_ADDRESS` | Admin multisig (Safe) address |
-| `SIGNER` | Initial trusted EIP-712 signer address for cashback operations |
-
-### Deploy
-
-```shell
-make deploy-staging       # deploy to Tenderly Virtual TestNet
-make deploy-production    # deploy to Base mainnet (confirmation prompt)
-```
-
-### Verify
-
-```shell
-make verify-staging ADDRESS=0x...     # verify on staging
-make verify-production ADDRESS=0x...  # verify on Basescan
-```
-
-
 ## Security Features
 
 - **Dead shares**: 1000 shares minted to `0xdead` on first deposit (prevents share inflation / first depositor attack)
@@ -401,6 +383,8 @@ make verify-production ADDRESS=0x...  # verify on Basescan
 - **Exit fee rounding**: Ceiling division (`Math.mulDiv` with `Rounding.Ceil`) ensures fractional wei always favors the protocol
 - **Dust unstake guard**: `ZeroUnstakeAmount` revert prevents ceil-rounded exit fee from consuming 100% of a dust unstake
 - **2-step safe transfer**: `proposeSafe()` + `acceptSafe()` prevents admin transfer to wrong address (same pattern as OpenZeppelin `Ownable2Step`)
+- **Partial unstake toggle**: `allowPartialUnstake` (default: disabled) prevents users from partially withdrawing via contract calls when the product only supports full unstake
+- **Preview dust guard**: `previewStake()` returns 0 instead of reverting for dust amounts, preventing unexpected UI errors
 - **Batch size limit**: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve solvency check
 - **Rich error context**: User-facing errors include address and value params for debugging (see table below)
 
@@ -469,6 +453,40 @@ forge test --match-contract RNBWStakingSimulation -vvv   # simulation only
 
 ```shell
 forge fmt
+```
+
+## Deployment
+
+### Environment Variables
+
+Copy the appropriate example file and fill in values:
+
+```shell
+cp .env.staging.example .env.staging    # for staging (Tenderly Virtual TestNet)
+cp .env.production.example .env.production  # for production (Base mainnet)
+```
+
+| Variable | Description |
+|----------|-------------|
+| `RPC_URL` | RPC endpoint (Tenderly for staging, `https://mainnet.base.org` for production) |
+| `PRIVATE_KEY` | Deployer wallet private key |
+| `ETHERSCAN_API_KEY` | Tenderly access token (staging) or Basescan API key (production) |
+| `RNBW_TOKEN` | RNBW ERC20 token contract address |
+| `SAFE_ADDRESS` | Admin multisig (Safe) address |
+| `SIGNER` | Initial trusted EIP-712 signer address for cashback operations |
+
+### Deploy
+
+```shell
+make deploy-staging       # deploy to Tenderly Virtual TestNet
+make deploy-production    # deploy to Base mainnet (confirmation prompt)
+```
+
+### Verify
+
+```shell
+make verify-staging ADDRESS=0x...     # verify on staging
+make verify-production ADDRESS=0x...  # verify on Basescan
 ```
 
 ## EIP-7702 Compatibility
