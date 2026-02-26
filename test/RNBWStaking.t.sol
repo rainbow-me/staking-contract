@@ -169,7 +169,7 @@ contract RNBWStakingTest is Test {
         vm.stopPrank();
 
         uint256 deadShares = staking.MINIMUM_SHARES();
-        (uint256 stakedAmount, uint256 userShares,,) = staking.getPosition(alice);
+        (uint256 stakedAmount, uint256 userShares,,,,,,) = staking.getPosition(alice);
 
         assertEq(userShares, amount - deadShares);
         assertApproxEqAbs(stakedAmount, amount, deadShares);
@@ -204,7 +204,7 @@ contract RNBWStakingTest is Test {
         staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, sig);
 
         uint256 deadShares = staking.MINIMUM_SHARES();
-        (uint256 stakedAmount, uint256 userShares,,) = staking.getPosition(alice);
+        (uint256 stakedAmount, uint256 userShares,,,,,,) = staking.getPosition(alice);
         assertApproxEqAbs(stakedAmount, 110 ether, deadShares);
         assertEq(userShares, 100 ether + 10 ether - deadShares);
         assertEq(staking.totalPooledRnbw(), 110 ether);
@@ -617,5 +617,110 @@ contract RNBWStakingTest is Test {
 
         vm.expectRevert(IRNBWStaking.ArrayLengthMismatch.selector);
         staking.batchAllocateCashbackWithSignature(users, amounts, nonces, expiries, sigs);
+    }
+
+    function test_LifetimeFieldsStake() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 200 ether);
+        staking.stake(100 ether);
+        staking.stake(50 ether);
+        vm.stopPrank();
+
+        (,,,,, uint256 totalStaked,,) = staking.getPosition(alice);
+        assertEq(totalStaked, 150 ether);
+    }
+
+    function test_LifetimeFieldsUnstake() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        uint256 aliceShares = staking.shares(alice);
+        staking.unstake(aliceShares);
+        vm.stopPrank();
+
+        (,,,,,uint256 totalStaked, uint256 totalUnstaked, uint256 totalFees) = staking.getPosition(alice);
+        assertEq(totalStaked, 100 ether);
+        assertGt(totalUnstaked, 0);
+        assertGt(totalFees, 0);
+        assertApproxEqAbs(totalUnstaked + totalFees, 100 ether, staking.MINIMUM_SHARES());
+    }
+
+    function test_LifetimeFieldsCashback() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(20 ether);
+
+        uint256 nonce = 1;
+        uint256 expiry = block.timestamp + 60;
+        bytes memory sig = _signAllocateCashback(alice, 10 ether, nonce, expiry);
+        staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, sig);
+
+        nonce = 2;
+        sig = _signAllocateCashback(alice, 5 ether, nonce, expiry);
+        staking.allocateCashbackWithSignature(alice, 5 ether, nonce, expiry, sig);
+
+        (,,,, uint256 cashbackReceived,,,) = staking.getPosition(alice);
+        assertEq(cashbackReceived, 15 ether);
+        assertEq(staking.totalCashbackAllocated(), 15 ether);
+    }
+
+    function test_LifetimeFieldsPersistAfterFullUnstake() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 200 ether);
+        staking.stake(100 ether);
+        uint256 aliceShares = staking.shares(alice);
+        staking.unstake(aliceShares);
+        vm.stopPrank();
+
+        (,,,, uint256 cashback, uint256 totalStaked, uint256 totalUnstaked, uint256 totalFees) =
+            staking.getPosition(alice);
+
+        assertEq(totalStaked, 100 ether);
+        assertGt(totalUnstaked, 0);
+        assertGt(totalFees, 0);
+
+        vm.startPrank(alice);
+        staking.stake(50 ether);
+        vm.stopPrank();
+
+        (,,,, uint256 cashback2, uint256 totalStaked2, uint256 totalUnstaked2, uint256 totalFees2) =
+            staking.getPosition(alice);
+
+        assertEq(cashback2, cashback);
+        assertEq(totalStaked2, 150 ether);
+        assertEq(totalUnstaked2, totalUnstaked);
+        assertEq(totalFees2, totalFees);
+    }
+
+    function test_TotalCashbackAllocatedGlobal() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(20 ether);
+
+        uint256 expiry = block.timestamp + 60;
+
+        bytes memory sig1 = _signAllocateCashback(alice, 5 ether, 1, expiry);
+        staking.allocateCashbackWithSignature(alice, 5 ether, 1, expiry, sig1);
+
+        bytes memory sig2 = _signAllocateCashback(bob, 3 ether, 1, expiry);
+        staking.allocateCashbackWithSignature(bob, 3 ether, 1, expiry, sig2);
+
+        assertEq(staking.totalCashbackAllocated(), 8 ether);
+
+        (,,,, uint256 aliceCashback,,,) = staking.getPosition(alice);
+        (,,,, uint256 bobCashback,,,) = staking.getPosition(bob);
+        assertEq(aliceCashback, 5 ether);
+        assertEq(bobCashback, 3 ether);
     }
 }

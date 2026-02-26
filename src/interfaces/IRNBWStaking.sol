@@ -8,9 +8,17 @@ interface IRNBWStaking {
     /// @notice Metadata tracked per staking position
     /// @param lastUpdateTime Timestamp of the last stake, unstake, or cashback action
     /// @param stakingStartTime Timestamp of the user's first stake (reset to 0 on full unstake)
+    /// @param totalCashbackReceived Lifetime cumulative cashback RNBW allocated to this user (never resets)
+    /// @param totalRnbwStaked Lifetime cumulative RNBW deposited via stake() (never resets)
+    /// @param totalRnbwUnstaked Lifetime cumulative net RNBW received from unstake(), after exit fee (never resets)
+    /// @param totalExitFeePaid Lifetime cumulative exit fees paid by this user (never resets)
     struct UserMeta {
         uint256 lastUpdateTime;
         uint256 stakingStartTime;
+        uint256 totalCashbackReceived;
+        uint256 totalRnbwStaked;
+        uint256 totalRnbwUnstaked;
+        uint256 totalExitFeePaid;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -194,10 +202,23 @@ interface IRNBWStaking {
     /// @return userShares The user's raw share balance
     /// @return lastUpdateTime Timestamp of the last action on this position
     /// @return stakingStartTime Timestamp of the user's first stake
+    /// @return totalCashbackReceived Lifetime cumulative cashback RNBW allocated
+    /// @return totalRnbwStaked Lifetime cumulative RNBW deposited via stake()
+    /// @return totalRnbwUnstaked Lifetime cumulative net RNBW received from unstake()
+    /// @return totalExitFeePaid Lifetime cumulative exit fees paid
     function getPosition(address user)
         external
         view
-        returns (uint256 stakedAmount, uint256 userShares, uint256 lastUpdateTime, uint256 stakingStartTime);
+        returns (
+            uint256 stakedAmount,
+            uint256 userShares,
+            uint256 lastUpdateTime,
+            uint256 stakingStartTime,
+            uint256 totalCashbackReceived,
+            uint256 totalRnbwStaked,
+            uint256 totalRnbwUnstaked,
+            uint256 totalExitFeePaid
+        );
 
     /// @notice Converts a share amount to its RNBW value at the current exchange rate
     /// @param sharesAmount The number of shares to convert

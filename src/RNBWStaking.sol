@@ -66,6 +66,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     mapping(address signer => bool trusted) internal _trustedSigners;
     uint256 public trustedSignerCount;
 
+    uint256 public totalCashbackAllocated;
+
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
@@ -162,10 +164,28 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function getPosition(address user)
         external
         view
-        returns (uint256 stakedAmount, uint256 userShares, uint256 lastUpdateTime, uint256 stakingStartTime)
+        returns (
+            uint256 stakedAmount,
+            uint256 userShares,
+            uint256 lastUpdateTime,
+            uint256 stakingStartTime,
+            uint256 totalCashbackReceived,
+            uint256 totalRnbwStaked,
+            uint256 totalRnbwUnstaked,
+            uint256 totalExitFeePaid
+        )
     {
         UserMeta memory meta = userMeta[user];
-        return (getRnbwForShares(shares[user]), shares[user], meta.lastUpdateTime, meta.stakingStartTime);
+        return (
+            getRnbwForShares(shares[user]),
+            shares[user],
+            meta.lastUpdateTime,
+            meta.stakingStartTime,
+            meta.totalCashbackReceived,
+            meta.totalRnbwStaked,
+            meta.totalRnbwUnstaked,
+            meta.totalExitFeePaid
+        );
     }
 
     /// @inheritdoc IRNBWStaking
@@ -364,12 +384,13 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         totalShares += sharesToMint;
         totalPooledRnbw += amount;
 
-        // 6. Update user metadata (timestamps)
+        // 6. Update user metadata
         UserMeta storage meta = userMeta[user];
         if (meta.stakingStartTime == 0) {
             meta.stakingStartTime = block.timestamp;
         }
         meta.lastUpdateTime = block.timestamp;
+        meta.totalRnbwStaked += amount;
 
         // 7. Emit events
         emit Staked(user, amount, sharesToMint, shares[user]);
@@ -421,6 +442,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         // 6. Update user metadata
         UserMeta storage meta = userMeta[user];
         meta.lastUpdateTime = block.timestamp;
+        meta.totalRnbwUnstaked += netAmount;
+        meta.totalExitFeePaid += exitFee;
         if (shares[user] == 0) {
             meta.stakingStartTime = 0;
         }
@@ -471,7 +494,10 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         cashbackReserve -= rnbwCashback;
 
         // 6. Update metadata
-        userMeta[user].lastUpdateTime = block.timestamp;
+        UserMeta storage meta = userMeta[user];
+        meta.lastUpdateTime = block.timestamp;
+        meta.totalCashbackReceived += rnbwCashback;
+        totalCashbackAllocated += rnbwCashback;
 
         // 7. Emit events
         emit CashbackAllocated(user, rnbwCashback, sharesToMint);
