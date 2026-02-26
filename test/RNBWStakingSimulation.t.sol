@@ -39,6 +39,9 @@ contract RNBWStakingSimulation is Test {
         rnbwToken.mint(bob, 100_000 ether);
         rnbwToken.mint(charlie, 100_000 ether);
 
+        vm.prank(admin);
+        staking.setAllowPartialUnstake(true);
+
         console.log("=== SIMULATION SETUP COMPLETE ===");
     }
 

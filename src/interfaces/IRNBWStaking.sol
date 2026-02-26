@@ -69,6 +69,10 @@ interface IRNBWStaking {
     /// @param newMinStakeAmount The new minimum stake amount
     event MinStakeAmountUpdated(uint256 indexed oldMinStakeAmount, uint256 indexed newMinStakeAmount);
 
+    /// @notice Emitted when partial unstake permission is toggled
+    /// @param allowed Whether partial unstake is now allowed
+    event PartialUnstakeToggled(bool allowed);
+
     /// @notice Emitted when the admin deposits RNBW to fund cashback rewards
     /// @param from The depositor's address (must be safe)
     /// @param amount The amount of RNBW deposited
@@ -157,6 +161,9 @@ interface IRNBWStaking {
     /// @notice Thrown when ceil-rounded exit fee consumes entire unstake amount (dust protection)
     error ZeroUnstakeAmount(address user, uint256 rnbwValue);
 
+    /// @notice Thrown when partial unstake is attempted but not allowed
+    error PartialUnstakeDisabled(address user, uint256 sharesToBurn, uint256 totalUserShares);
+
     /// @notice Thrown when batch array lengths do not match
     error ArrayLengthMismatch();
 
@@ -174,6 +181,9 @@ interface IRNBWStaking {
     /// @notice Burn shares to unstake RNBW. An exit fee is deducted and stays in the pool.
     /// @param sharesToBurn The number of shares to burn
     function unstake(uint256 sharesToBurn) external;
+
+    /// @notice Burn all of the caller's shares to unstake RNBW. Convenience wrapper around unstake().
+    function unstakeAll() external;
 
     /// @notice Allocate cashback to a staker by minting shares (backend-only, signature-gated)
     /// @param user The recipient staker's address
@@ -245,6 +255,21 @@ interface IRNBWStaking {
     /// @return The exchange rate (1e18 = 1:1)
     function getExchangeRate() external view returns (uint256);
 
+    /// @notice Preview the outcome of unstaking a given number of shares
+    /// @param sharesToBurn The number of shares to burn
+    /// @return rnbwValue The gross RNBW value before exit fee
+    /// @return exitFee The exit fee amount
+    /// @return netReceived The net RNBW the user would receive
+    function previewUnstake(uint256 sharesToBurn)
+        external
+        view
+        returns (uint256 rnbwValue, uint256 exitFee, uint256 netReceived);
+
+    /// @notice Preview the number of shares that would be minted for a given stake amount
+    /// @param amount The RNBW amount to stake
+    /// @return sharesToMint The number of shares that would be minted
+    function previewStake(uint256 amount) external view returns (uint256 sharesToMint);
+
     /// @notice Checks if a nonce has been used for a given user
     /// @param user The user's address
     /// @param nonce The nonce to check
@@ -302,4 +327,8 @@ interface IRNBWStaking {
 
     /// @notice Accept the proposed safe address (step 2 of 2-step transfer, callable by pending safe only)
     function acceptSafe() external;
+
+    /// @notice Toggle whether partial unstake is allowed (default: true)
+    /// @param allowed Whether to allow partial unstake
+    function setAllowPartialUnstake(bool allowed) external;
 }

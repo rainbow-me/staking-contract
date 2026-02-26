@@ -12,7 +12,7 @@ Shares-based staking contract for **$RNBW** on Base. Exit fees stay in the pool 
 | Feature | Details |
 |---------|---------|
 | Staking | `stake()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702) |
-| Unstaking | `unstake()` -- user calls directly or via relay |
+| Unstaking | `unstake()` -- user calls directly or via relay. Partial unstake toggleable by admin (default: disabled) |
 | Exit fee | Configurable 1%--75%, default 15% -- stays in pool |
 | Cashback | Backend allocates via `allocateCashbackWithSignature()` -- mints shares immediately in one step |
 | Dead shares | First deposit mints 1000 shares to `0xdead` (UniswapV2-style inflation protection) |
@@ -28,6 +28,7 @@ Shares-based staking contract for **$RNBW** on Base. Exit fees stay in the pool 
 |----------|--------|-------------|
 | `stake(amount)` | User (direct or relay) | Stake RNBW to receive shares. `msg.sender` is always the user. |
 | `unstake(sharesToBurn)` | User (direct or relay) | Burn shares to receive RNBW minus exit fee. `msg.sender` is always the user. |
+| `unstakeAll()` | User (direct or relay) | Burn all shares. Convenience wrapper -- no need to query share balance first. |
 
 Both functions use `msg.sender`, so they work with any relay service that preserves the user's address as the caller: Gelato Turbo Relayer, Relay.link, EIP-7702 delegated EOAs.
 
@@ -47,6 +48,7 @@ Any `msg.sender` can submit these transactions (relayer, bot, user). The contrac
 | `fundCashbackReserve(amount)` | Pre-fund the cashback reserve with RNBW |
 | `setExitFeeBps(newExitFeeBps)` | Update exit fee (1%--75%) |
 | `setMinStakeAmount(newMinStakeAmount)` | Update minimum first-time stake (1 RNBW -- 1M RNBW) |
+| `setAllowPartialUnstake(allowed)` | Toggle partial unstake (default: disabled) |
 | `proposeSafe(newSafe)` | Propose a new Safe address (step 1 of 2-step transfer) |
 | `acceptSafe()` | Accept proposed Safe address (step 2, callable by pending safe only) |
 | `addTrustedSigner(signer)` | Add an EIP-712 signer (max 3) |
@@ -62,6 +64,8 @@ Any `msg.sender` can submit these transactions (relayer, bot, user). The contrac
 | `getRnbwForShares(sharesAmount)` | RNBW value at current exchange rate |
 | `getSharesForRnbw(rnbwAmount)` | Share equivalent at current exchange rate |
 | `getExchangeRate()` | Current exchange rate scaled by 1e18 |
+| `previewUnstake(sharesToBurn)` | `(rnbwValue, exitFee, netReceived)` -- preview unstake outcome |
+| `previewStake(amount)` | `sharesToMint` -- preview shares from staking |
 | `isNonceUsed(user, nonce)` | Whether a cashback nonce has been used |
 | `domainSeparator()` | EIP-712 domain separator |
 | `isTrustedSigner(signer)` | Whether an address is a trusted signer |
@@ -411,6 +415,7 @@ All user-facing errors include contextual parameters for off-chain debugging. Ad
 | `BelowMinimumStake` | `(user, amount, minRequired)` | `_stake` |
 | `ZeroSharesMinted` | `(user, amount)` | `_stake`, `_allocateCashback` |
 | `ZeroUnstakeAmount` | `(user, rnbwValue)` | `_unstake` |
+| `PartialUnstakeDisabled` | `(user, sharesToBurn, totalUserShares)` | `_unstake` |
 
 ### Dead Shares Lifecycle
 
