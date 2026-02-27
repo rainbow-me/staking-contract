@@ -298,6 +298,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             if (amount > excess) revert InsufficientExcess();
         }
         IERC20(token).safeTransfer(safe, amount);
+        emit EmergencyWithdrawn(token, amount);
     }
 
     /// @inheritdoc IRNBWStaking
