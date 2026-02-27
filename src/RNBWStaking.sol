@@ -208,7 +208,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function getSharesForRnbw(uint256 rnbwAmount) public view returns (uint256) {
-        if (totalPooledRnbw == 0) return rnbwAmount;
+        if (totalPooledRnbw == 0) {
+            return rnbwAmount <= MINIMUM_SHARES ? 0 : rnbwAmount - MINIMUM_SHARES;
+        }
         return (rnbwAmount * totalShares) / totalPooledRnbw;
     }
 
