@@ -76,7 +76,8 @@ interface IRNBWStaking {
     /// @notice Emitted when the admin deposits RNBW to fund cashback rewards
     /// @param from The depositor's address (must be safe)
     /// @param amount The amount of RNBW deposited
-    event CashbackReserveFunded(address indexed from, uint256 amount);
+    /// @param newReserve The total cashback reserve after funding
+    event CashbackReserveFunded(address indexed from, uint256 amount, uint256 newReserve);
 
     /// @notice Emitted when a new safe address is proposed (step 1 of 2-step transfer)
     /// @param currentSafe The current safe address that proposed the change
