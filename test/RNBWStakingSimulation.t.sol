@@ -629,4 +629,99 @@ contract RNBWStakingSimulation is Test {
         console.log("");
         console.log("=== LIFETIME P&L VERIFIED ===");
     }
+
+    // Self-yield: when a user does a partial unstake, their exit fee stays in the pool.
+    // Because they still hold shares, the higher exchange rate benefits their remaining
+    // position — they effectively pay part of the fee to themselves ("left pocket / right pocket").
+    //
+    // In a multi-user pool the fee is split proportionally among ALL remaining shareholders:
+    //   - The unstaker recaptures (remainingShares / totalSharesAfter) of their own fee
+    //   - Other stakers receive the rest as cross-yield
+    //
+    // This test verifies both effects with Alice and Bob in the pool.
+    function test_Simulation_SelfYieldAndCrossYield() public {
+        console.log("");
+        console.log("=== SELF-YIELD & CROSS-YIELD SIMULATION ===");
+
+        // Setup: Alice and Bob each stake 50k RNBW
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 50_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 50_000 ether);
+        staking.stake(50_000 ether);
+        vm.stopPrank();
+
+        uint256 rateBefore = staking.getExchangeRate();
+        uint256 bobValueBefore;
+        {
+            (uint256 av,,,,,,,) = staking.getPosition(alice);
+            (uint256 bv,,,,,,,) = staking.getPosition(bob);
+            bobValueBefore = bv;
+            console.log("Rate before:       ", rateBefore);
+            console.log("Alice value before: ", av / 1e18);
+            console.log("Bob value before:   ", bv / 1e18);
+        }
+
+        // Alice does a partial unstake (burns half her shares)
+        uint256 halfShares = staking.shares(alice) / 2;
+        vm.prank(alice);
+        staking.unstake(halfShares);
+
+        uint256 rateAfter = staking.getExchangeRate();
+        console.log("");
+        console.log("--- After Alice partial unstake (50% of shares) ---");
+        console.log("Rate after:         ", rateAfter);
+
+        // Rate must increase (exit fee stayed in pool with fewer shares)
+        assertGt(rateAfter, rateBefore);
+
+        // Self-yield: Alice's remaining shares are worth more at the new rate
+        // than they would have been at the old rate
+        uint256 aliceRemainingShares = staking.shares(alice);
+        uint256 aliceValueAtOldRate = (aliceRemainingShares * rateBefore) / 1e18;
+        uint256 aliceValueAfter;
+        uint256 aliceExitFee;
+        {
+            (uint256 av,,,,,,, uint256 fee) = staking.getPosition(alice);
+            aliceValueAfter = av;
+            aliceExitFee = fee;
+        }
+        uint256 aliceSelfYield = aliceValueAfter - aliceValueAtOldRate;
+
+        console.log("Alice remaining shares:", aliceRemainingShares / 1e18);
+        console.log("Value at old rate:     ", aliceValueAtOldRate / 1e18);
+        console.log("Value at new rate:     ", aliceValueAfter / 1e18);
+        console.log("Alice self-yield:      ", aliceSelfYield / 1e18);
+        console.log("Alice exit fee paid:   ", aliceExitFee / 1e18);
+
+        // Cross-yield: Bob's position gained value from Alice's exit fee
+        uint256 bobValueAfter;
+        {
+            (uint256 bv,,,,,,,) = staking.getPosition(bob);
+            bobValueAfter = bv;
+        }
+        uint256 bobCrossYield = bobValueAfter - bobValueBefore;
+        console.log("Bob value after:       ", bobValueAfter / 1e18);
+        console.log("Bob cross-yield:       ", bobCrossYield / 1e18);
+
+        // Self-yield: Alice's remaining position is worth more than it would be at the old rate
+        assertGt(aliceSelfYield, 0);
+
+        // Cross-yield: Bob gained value without doing anything
+        assertGt(bobCrossYield, 0);
+
+        // Bob's cross-yield should be larger than Alice's self-yield because
+        // Bob holds more shares than Alice's remaining position
+        assertGt(bobCrossYield, aliceSelfYield);
+
+        // The total fee is fully accounted for: self-yield + cross-yield + dead share dust = exitFee
+        // (We don't assert exact equality because dead shares absorb a negligible fraction)
+        assertGt(aliceExitFee, aliceSelfYield + bobCrossYield - 1 ether);
+
+        console.log("");
+        console.log("=== SELF-YIELD & CROSS-YIELD VERIFIED ===");
+    }
 }
