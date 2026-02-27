@@ -338,7 +338,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (amount == 0) revert ZeroAmount();
         RNBW_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
         cashbackReserve += amount;
-        emit CashbackReserveFunded(msg.sender, amount);
+        emit CashbackReserveFunded(msg.sender, amount, cashbackReserve);
     }
 
     /// @inheritdoc IRNBWStaking
