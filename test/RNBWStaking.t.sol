@@ -1157,22 +1157,15 @@ contract RNBWStakingTest is Test {
         staking.emergencyWithdraw(address(otherToken), 1 ether);
     }
 
-    function test_BatchAllocateCashbackEmptyArraysNoop() public {
+    function test_BatchAllocateCashbackEmptyArraysReverts() public {
         address[] memory users = new address[](0);
         uint256[] memory amounts = new uint256[](0);
         uint256[] memory nonces = new uint256[](0);
         uint256[] memory expiries = new uint256[](0);
         bytes[] memory sigs = new bytes[](0);
 
-        uint256 totalPooledBefore = staking.totalPooledRnbw();
-        uint256 reserveBefore = staking.cashbackReserve();
-        uint256 totalAllocatedBefore = staking.totalCashbackAllocated();
-
+        vm.expectRevert(IRNBWStaking.EmptyBatch.selector);
         staking.batchAllocateCashbackWithSignature(users, amounts, nonces, expiries, sigs);
-
-        assertEq(staking.totalPooledRnbw(), totalPooledBefore);
-        assertEq(staking.cashbackReserve(), reserveBefore);
-        assertEq(staking.totalCashbackAllocated(), totalAllocatedBefore);
     }
 
     function test_AllocateCashbackExpiryAtCurrentTimestampAllowed() public {

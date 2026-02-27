@@ -151,6 +151,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         bytes[] calldata signatures
     ) external nonReentrant whenNotPaused {
         uint256 len = users.length;
+        if (len == 0) revert EmptyBatch();
         if (len > MAX_BATCH_SIZE) revert BatchTooLarge();
         if (len != rnbwCashbacks.length || len != nonces.length || len != expiries.length || len != signatures.length) {
             revert ArrayLengthMismatch();
