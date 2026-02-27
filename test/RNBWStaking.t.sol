@@ -921,7 +921,12 @@ contract RNBWStakingTest is Test {
 
     function test_GetSharesForRnbwEmptyPool() public view {
         uint256 shares_ = staking.getSharesForRnbw(100 ether);
-        assertEq(shares_, 100 ether);
+        assertEq(shares_, 100 ether - staking.MINIMUM_SHARES());
+    }
+
+    function test_GetSharesForRnbwEmptyPoolDust() public view {
+        uint256 shares_ = staking.getSharesForRnbw(500);
+        assertEq(shares_, 0);
     }
 
     function test_AddTrustedSignerRevertZeroAddress() public {
