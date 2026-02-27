@@ -225,7 +225,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     {
         rnbwValue = getRnbwForShares(sharesToBurn);
         exitFee = Math.mulDiv(rnbwValue, exitFeeBps, BASIS_POINTS, Math.Rounding.Ceil);
-        netReceived = rnbwValue - exitFee;
+        netReceived = exitFee >= rnbwValue ? 0 : rnbwValue - exitFee;
     }
 
     /// @inheritdoc IRNBWStaking
