@@ -596,7 +596,7 @@ contract RNBWStakingSimulation is Test {
         int256 iCashbackReceived = SafeCast.toInt256(cashbackReceived);
         int256 iExitFeePaid = SafeCast.toInt256(exitFeePaid);
 
-        int256 lifetimeEarnings = iCurrentValue + iTotalUnstaked - iTotalStaked + iCashbackReceived;
+        int256 lifetimeEarnings = iCurrentValue + iTotalUnstaked - iTotalStaked;
         int256 exchangeRateGain = iCurrentValue + iTotalUnstaked + iExitFeePaid - iTotalStaked - iCashbackReceived;
 
         console.log("");
