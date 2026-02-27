@@ -336,6 +336,9 @@ interface IRNBWStaking {
     /// @param newSafe The proposed new safe address
     function proposeSafe(address newSafe) external;
 
+    /// @notice Cancel a pending safe proposal (callable by current safe only)
+    function cancelProposedSafe() external;
+
     /// @notice Accept the proposed safe address (step 2 of 2-step transfer, callable by pending safe only)
     function acceptSafe() external;
 

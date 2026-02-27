@@ -1224,4 +1224,31 @@ contract RNBWStakingTest is Test {
         assertEq(staking.safe(), safeB);
         assertEq(staking.pendingSafe(), address(0));
     }
+
+    function test_CancelProposedSafe() public {
+        address newSafe = makeAddr("newSafe");
+        vm.prank(admin);
+        staking.proposeSafe(newSafe);
+        assertEq(staking.pendingSafe(), newSafe);
+
+        vm.prank(admin);
+        staking.cancelProposedSafe();
+        assertEq(staking.pendingSafe(), address(0));
+    }
+
+    function test_CancelProposedSafeRevertNoPending() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.NoPendingSafe.selector);
+        staking.cancelProposedSafe();
+    }
+
+    function test_CancelProposedSafeRevertUnauthorized() public {
+        address newSafe = makeAddr("newSafe");
+        vm.prank(admin);
+        staking.proposeSafe(newSafe);
+
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.cancelProposedSafe();
+    }
 }
