@@ -467,14 +467,20 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         uint256 netAmount = rnbwValue - exitFee;
         if (netAmount == 0) revert ZeroUnstakeAmount(user, rnbwValue);
 
-        // 4. Burn user's shares and update global totals
+        // 4. Invariant check: the pool must always have enough RNBW to cover the
+        //    net withdrawal. This should never fire because netAmount ≤ rnbwValue
+        //    and rnbwValue is derived from totalPooledRnbw, but we guard against
+        //    any future rounding or logic change that could violate this.
+        if (totalPooledRnbw < netAmount) revert AccountingError();
+
+        // 5. Burn user's shares and update global totals
         //    NOTE: Exit fee stays in pool (totalPooledRnbw only decreases by netAmount)
         //    This increases exchange rate for remaining stakers
         shares[user] -= sharesToBurn;
         totalShares -= sharesToBurn;
         totalPooledRnbw -= netAmount;
 
-        // 5. Reset totalPooledRnbw when all shares are burned to prevent
+        // 6. Reset totalPooledRnbw when all shares are burned to prevent
         //    share inflation attack. Without this, orphaned exit-fee RNBW
         //    would remain in totalPooledRnbw while totalShares == 0.
         //    The next staker would hit the `totalShares == 0` branch (1:1 minting)
@@ -490,7 +496,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             totalShares = 0;
         }
 
-        // 6. Update user metadata
+        // 7. Update user metadata
         UserMeta storage meta = userMeta[user];
         meta.lastUpdateTime = block.timestamp;
         meta.totalRnbwUnstaked += netAmount;
@@ -499,16 +505,16 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             meta.stakingStartTime = 0;
         }
 
-        // 7. Transfer net RNBW to user (after exit fee deduction)
+        // 8. Transfer net RNBW to user (after exit fee deduction)
         RNBW_TOKEN.safeTransfer(user, netAmount);
 
-        // 8. Sweep residual dust to safe (done after user transfer to keep
+        // 9. Sweep residual dust to safe (done after user transfer to keep
         //    reentrancy surface minimal and state fully settled first)
         if (residual > 0) {
             RNBW_TOKEN.safeTransfer(safe, residual);
         }
 
-        // 9. Emit events
+        // 10. Emit events
         emit Unstaked(user, sharesToBurn, rnbwValue, exitFee, netAmount);
         emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
     }

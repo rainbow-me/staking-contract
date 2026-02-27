@@ -170,6 +170,9 @@ interface IRNBWStaking {
     /// @notice Thrown when batch size exceeds MAX_BATCH_SIZE
     error BatchTooLarge();
 
+    /// @notice Thrown when an internal accounting invariant is violated (should never happen)
+    error AccountingError();
+
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
