@@ -374,6 +374,102 @@ const exchangeRateGain    = netProfit - totalCashbackEarned + totalExitFeePaid;
 | Exchange Rate Gain | `netProfit - cashbackEarned + exitFeesPaid` | Pure staking yield (exit fee redistribution) |
 | Decomposition | `netProfit == cashbackEarned + exchangeRateGain - exitFeesPaid` | Invariant check |
 
+### Per-Wallet APY (Indexer-Based)
+
+Per-wallet APY requires an indexer that replays contract events and computes **Time-Weighted Average Capital (TWAC)**.
+
+#### Event Table
+
+```sql
+CREATE TABLE staking_events (
+    id              BIGSERIAL PRIMARY KEY,
+    wallet          TEXT NOT NULL,
+    event_type      TEXT NOT NULL,  -- 'stake', 'unstake', 'cashback'
+    block_number    BIGINT NOT NULL,
+    block_timestamp TIMESTAMPTZ NOT NULL,
+    rnbw_amount     NUMERIC(78,0) NOT NULL,
+    shares_delta    NUMERIC(78,0) NOT NULL,
+    exchange_rate   NUMERIC(38,18) NOT NULL,
+    exit_fee        NUMERIC(78,0) DEFAULT 0,
+    tx_hash         TEXT NOT NULL,
+    UNIQUE(tx_hash, wallet, event_type)
+);
+
+CREATE INDEX idx_staking_events_wallet ON staking_events(wallet, block_timestamp);
+```
+
+#### Deriving Exchange Rate From Events (No Extra RPC Calls)
+
+The exchange rate is implicit in every event — no need to emit it separately:
+
+| Event | Formula |
+|-------|---------|
+| `Staked(user, rnbwAmount, sharesMinted, _)` | `rnbwAmount / sharesMinted` |
+| `Unstaked(user, sharesBurned, rnbwValue, _, _)` | `rnbwValue / sharesBurned` |
+| `CashbackAllocated(user, rnbwAmount, sharesMinted)` | `rnbwAmount / sharesMinted` |
+
+> **Edge case:** The very first stake mints 1000 dead shares, so `sharesMinted = amount - 1000`. The derived rate is still correct but slightly above 1.0.
+
+#### Walkthrough Example
+
+**Events for Alice:**
+
+| Event | Timestamp | RNBW Amount | Shares Delta | Exchange Rate |
+|-------|-----------|-------------|-------------|---------------|
+| stake | Jan 1 | 1000 | +1000 | 1.0 |
+| cashback | Mar 1 | 50 | +50 | 1.0 |
+| unstake | Jul 1 | 550 (gross) | -500 | 1.1 |
+
+**Step 1 — Build capital periods** (what Alice had, for how long):
+
+| Period | Running Shares | Rate | Capital (RNBW) | Duration (days) |
+|--------|---------------|------|----------------|-----------------|
+| Jan 1 → Mar 1 | 1000 | 1.0 | 1000 | 59 |
+| Mar 1 → Jul 1 | 1050 | 1.0 | 1050 | 122 |
+| Jul 1 → Dec 31 | 550 | 1.1 | 605 | 183 |
+
+Each period starts when an event changes the wallet's share balance. The capital is `running_shares × exchange_rate` at that point.
+
+**Step 2 — Compute TWAC:**
+
+```
+TWAC = (1000×59 + 1050×122 + 605×183) / (59 + 122 + 183)
+     = (59000 + 128100 + 110715) / 364
+     = 817.9 RNBW
+```
+
+**Step 3 — Compute net profit:**
+
+```
+netProfit = currentValue + totalUnstaked - totalStaked
+          = 605 + 550 - 1000
+          = 155 RNBW
+```
+
+**Step 4 — APY:**
+
+```
+duration = 364 days
+APY = (netProfit / TWAC) × (365.25 / duration)
+    = (155 / 817.9) × (365.25 / 364)
+    = 0.19
+    = 19%
+```
+
+#### Formula Summary
+
+```
+Per-Wallet APY = (netProfit / TWAC) × (secondsPerYear / durationSeconds)
+
+Where:
+  netProfit       = stakedAmount + totalUnstaked - totalStaked
+  TWAC            = Σ(capital_i × duration_i) / Σ(duration_i)
+  secondsPerYear  = 31,557,600 (365.25 days)
+  durationSeconds = now - first_stake_timestamp
+```
+
+> **Note:** Most users have 2-10 events, so per-wallet queries are trivially fast even at 500 tx/day.
+
 ---
 
 ## Security Features
