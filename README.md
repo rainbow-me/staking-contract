@@ -338,37 +338,41 @@ const blockB = await provider.getBlockNumber();  // now
 const blockA = blockB - 302_400;                 // ~7 days ago on Base
 ```
 
-### Per-User Lifetime P&L (from `UserMeta`)
+### Per-User Lifetime P&L (single `getPosition` call)
 
 ```javascript
-const position = await contract.getPosition(user);
-const meta     = await contract.userMeta(user);
+const [
+    stakedAmount, userShares, lastUpdateTime, stakingStartTime,
+    totalCashbackReceived, totalRnbwStaked, totalRnbwUnstaked, totalExitFeePaid
+] = await contract.getPosition(user);
 
-const currentValue = position.stakedAmount;
+// Lifetime net profit (cashback already included in stakedAmount via shares)
+const netProfit = stakedAmount + totalRnbwUnstaked - totalRnbwStaked;
 
-// Total lifetime earnings (cashback is already included in currentValue via shares)
-const lifetimeEarnings =
-    currentValue
-    + meta.totalRnbwUnstaked
-    - meta.totalRnbwStaked;
+// Decomposition
+const totalCashbackEarned = totalCashbackReceived;
+const exchangeRateGain    = netProfit - totalCashbackEarned + totalExitFeePaid;
 
-// Broken down
-const cashbackEarnings = meta.totalCashbackReceived;
-const exitFeesPaid     = meta.totalExitFeePaid;
-const exchangeRateGain = currentValue
-    + meta.totalRnbwUnstaked
-    + meta.totalExitFeePaid
-    - meta.totalRnbwStaked
-    - meta.totalCashbackReceived;
+// Invariant: netProfit == totalCashbackEarned + exchangeRateGain - totalExitFeePaid
 ```
+
+**Global APY (2-block approach)**
 
 | Metric | Formula | Meaning |
 |--------|---------|---------|
 | Total APY | `exitFeeApy + cashbackApy` | Annualized return for stakers |
 | Exit Fee APY | `(rateB/rateA)^(year/elapsed) - 1` | Yield from other users unstaking |
 | Cashback APY | `(deltaCashback/pool) * (year/elapsed)` | Yield from cashback program |
-| Lifetime P&L | `currentValue + totalUnstaked - totalStaked` | User's all-time profit/loss |
-| Exchange Rate Gain | `P&L - cashbackEarnings` | Pure staking yield (exit fee redistribution) |
+
+**Per-User P&L**
+
+| Metric | Formula | Meaning |
+|--------|---------|---------|
+| Net Profit | `stakedAmount + totalUnstaked - totalStaked` | User's all-time profit/loss in RNBW |
+| Cashback Earned | `totalCashbackReceived` | Lifetime cashback allocated |
+| Exit Fees Paid | `totalExitFeePaid` | Lifetime exit fees deducted |
+| Exchange Rate Gain | `netProfit - cashbackEarned + exitFeesPaid` | Pure staking yield (exit fee redistribution) |
+| Decomposition | `netProfit == cashbackEarned + exchangeRateGain - exitFeesPaid` | Invariant check |
 
 ---
 
