@@ -346,12 +346,11 @@ const meta     = await contract.userMeta(user);
 
 const currentValue = position.stakedAmount;
 
-// Total lifetime earnings
+// Total lifetime earnings (cashback is already included in currentValue via shares)
 const lifetimeEarnings =
     currentValue
     + meta.totalRnbwUnstaked
-    - meta.totalRnbwStaked
-    + meta.totalCashbackReceived;
+    - meta.totalRnbwStaked;
 
 // Broken down
 const cashbackEarnings = meta.totalCashbackReceived;
@@ -368,7 +367,7 @@ const exchangeRateGain = currentValue
 | Total APY | `exitFeeApy + cashbackApy` | Annualized return for stakers |
 | Exit Fee APY | `(rateB/rateA)^(year/elapsed) - 1` | Yield from other users unstaking |
 | Cashback APY | `(deltaCashback/pool) * (year/elapsed)` | Yield from cashback program |
-| Lifetime P&L | `currentValue + totalUnstaked - totalStaked + totalCashback` | User's all-time profit/loss |
+| Lifetime P&L | `currentValue + totalUnstaked - totalStaked` | User's all-time profit/loss |
 | Exchange Rate Gain | `P&L - cashbackEarnings` | Pure staking yield (exit fee redistribution) |
 
 ---
