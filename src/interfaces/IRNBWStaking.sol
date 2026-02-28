@@ -76,17 +76,28 @@ interface IRNBWStaking {
     /// @notice Emitted when the admin deposits RNBW to fund cashback rewards
     /// @param from The depositor's address (must be safe)
     /// @param amount The amount of RNBW deposited
-    event CashbackReserveFunded(address indexed from, uint256 amount);
+    /// @param newReserve The total cashback reserve after funding
+    event CashbackReserveFunded(address indexed from, uint256 amount, uint256 newReserve);
 
     /// @notice Emitted when a new safe address is proposed (step 1 of 2-step transfer)
     /// @param currentSafe The current safe address that proposed the change
     /// @param proposedSafe The proposed new safe address
     event SafeProposed(address indexed currentSafe, address indexed proposedSafe);
 
+    /// @notice Emitted when a pending safe proposal is cancelled
+    /// @param currentSafe The safe that cancelled the proposal
+    /// @param cancelledSafe The proposed safe that was cancelled
+    event SafeProposalCancelled(address indexed currentSafe, address indexed cancelledSafe);
+
     /// @notice Emitted when the safe (admin) address is updated (step 2 of 2-step transfer)
     /// @param oldSafe The previous safe address
     /// @param newSafe The new safe address
     event SafeUpdated(address indexed oldSafe, address indexed newSafe);
+
+    /// @notice Emitted when tokens are withdrawn via emergencyWithdraw
+    /// @param token The token address withdrawn
+    /// @param amount The amount withdrawn
+    event EmergencyWithdrawn(address indexed token, uint256 amount);
 
     /*//////////////////////////////////////////////////////////////
                                 ERRORS
@@ -169,6 +180,12 @@ interface IRNBWStaking {
 
     /// @notice Thrown when batch size exceeds MAX_BATCH_SIZE
     error BatchTooLarge();
+
+    /// @notice Thrown when a batch call is made with an empty array
+    error EmptyBatch();
+
+    /// @notice Thrown when an internal accounting invariant is violated (should never happen)
+    error AccountingError();
 
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
@@ -324,6 +341,9 @@ interface IRNBWStaking {
     /// @notice Propose a new safe address (step 1 of 2-step transfer, callable by current safe only)
     /// @param newSafe The proposed new safe address
     function proposeSafe(address newSafe) external;
+
+    /// @notice Cancel a pending safe proposal (callable by current safe only)
+    function cancelProposedSafe() external;
 
     /// @notice Accept the proposed safe address (step 2 of 2-step transfer, callable by pending safe only)
     function acceptSafe() external;
