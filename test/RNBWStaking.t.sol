@@ -882,4 +882,382 @@ contract RNBWStakingTest is Test {
 
         assertEq(staking.shares(bob), preview);
     }
+
+    function test_ConstructorRevertZeroToken() public {
+        vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
+        new RNBWStaking(address(0), admin, signer);
+    }
+
+    function test_ConstructorRevertZeroSafe() public {
+        vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
+        new RNBWStaking(address(rnbwToken), address(0), signer);
+    }
+
+    function test_ConstructorRevertZeroSigner() public {
+        vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
+        new RNBWStaking(address(rnbwToken), admin, address(0));
+    }
+
+    function test_PreviewStakeDustOnEmptyPool() public view {
+        uint256 preview = staking.previewStake(500);
+        assertEq(preview, 0);
+    }
+
+    function test_PreviewStakeSecondStaker() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 preview = staking.previewStake(50 ether);
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 50 ether);
+        staking.stake(50 ether);
+        vm.stopPrank();
+
+        assertEq(staking.shares(bob), preview);
+    }
+
+    function test_GetSharesForRnbwEmptyPool() public view {
+        uint256 shares_ = staking.getSharesForRnbw(100 ether);
+        assertEq(shares_, 100 ether - staking.MINIMUM_SHARES());
+    }
+
+    function test_GetSharesForRnbwEmptyPoolDust() public view {
+        uint256 shares_ = staking.getSharesForRnbw(500);
+        assertEq(shares_, 0);
+    }
+
+    function test_AddTrustedSignerRevertZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
+        staking.addTrustedSigner(address(0));
+    }
+
+    function test_InvalidSignerReverts() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(50 ether);
+
+        uint256 fakePk = 0xDEAD;
+        bytes32 structHash = keccak256(
+            abi.encode(staking.ALLOCATE_CASHBACK_TYPEHASH(), alice, 10 ether, uint256(0), block.timestamp + 1 hours)
+        );
+        bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(fakePk, digest);
+        bytes memory sig = abi.encodePacked(r, s, v);
+
+        vm.expectRevert(IRNBWStaking.InvalidSignature.selector);
+        staking.allocateCashbackWithSignature(alice, 10 ether, 0, block.timestamp + 1 hours, sig);
+    }
+
+    function test_BatchCashbackRevertInsufficientReserve() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(5 ether);
+
+        address[] memory users = new address[](2);
+        uint256[] memory amounts = new uint256[](2);
+        uint256[] memory nonces = new uint256[](2);
+        uint256[] memory expiries = new uint256[](2);
+        bytes[] memory sigs = new bytes[](2);
+
+        users[0] = alice;
+        users[1] = alice;
+        amounts[0] = 3 ether;
+        amounts[1] = 3 ether;
+        nonces[0] = 100;
+        nonces[1] = 101;
+        expiries[0] = block.timestamp + 1 hours;
+        expiries[1] = block.timestamp + 1 hours;
+        sigs[0] = _signAllocateCashback(alice, 3 ether, 100, expiries[0]);
+        sigs[1] = _signAllocateCashback(alice, 3 ether, 101, expiries[1]);
+
+        vm.expectRevert(IRNBWStaking.InsufficientCashbackBalance.selector);
+        staking.batchAllocateCashbackWithSignature(users, amounts, nonces, expiries, sigs);
+    }
+
+    function test_PreviewUnstakeDustShares() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(1000 ether);
+
+        for (uint256 i = 0; i < 10; ++i) {
+            bytes memory sig = _signAllocateCashback(alice, 100 ether, i, block.timestamp + 1 hours);
+            staking.allocateCashbackWithSignature(alice, 100 ether, i, block.timestamp + 1 hours, sig);
+        }
+
+        (uint256 rnbwValue, uint256 exitFee, uint256 netReceived) = staking.previewUnstake(1);
+        assertGt(rnbwValue, 0);
+        assertGt(exitFee, 0);
+        if (rnbwValue <= exitFee) {
+            assertEq(netReceived, 0);
+        }
+    }
+
+    function test_UnstakeAllResidualSweep() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        uint256 safeBefore = rnbwToken.balanceOf(admin);
+        vm.prank(alice);
+        staking.unstakeAll();
+        uint256 safeAfter = rnbwToken.balanceOf(admin);
+
+        assertEq(staking.totalShares(), 0);
+        assertEq(staking.totalPooledRnbw(), 0);
+        assertGt(safeAfter, safeBefore);
+    }
+
+    function test_RestakeAfterFullUnstake() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 200 ether);
+        staking.stake(100 ether);
+        staking.unstakeAll();
+
+        (,,, uint256 stakingStart,,,,) = staking.getPosition(alice);
+        assertEq(stakingStart, 0);
+
+        vm.warp(block.timestamp + 1 days);
+        staking.stake(50 ether);
+        vm.stopPrank();
+
+        (uint256 stakedAmount,, uint256 lastUpdate, uint256 newStart, uint256 cashback, uint256 totalStaked,,) =
+            staking.getPosition(alice);
+        assertGt(stakedAmount, 0);
+        assertGt(newStart, 0);
+        assertGt(lastUpdate, 0);
+        assertEq(totalStaked, 150 ether);
+        assertEq(cashback, 0);
+    }
+
+    function test_BatchCashbackPartialInvalidSignature() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(50 ether);
+
+        address[] memory users = new address[](2);
+        uint256[] memory amounts = new uint256[](2);
+        uint256[] memory nonces = new uint256[](2);
+        uint256[] memory expiries = new uint256[](2);
+        bytes[] memory sigs = new bytes[](2);
+
+        users[0] = alice;
+        users[1] = alice;
+        amounts[0] = 5 ether;
+        amounts[1] = 5 ether;
+        nonces[0] = 200;
+        nonces[1] = 201;
+        expiries[0] = block.timestamp + 1 hours;
+        expiries[1] = block.timestamp + 1 hours;
+        sigs[0] = _signAllocateCashback(alice, 5 ether, 200, expiries[0]);
+
+        uint256 fakePk = 0xDEAD;
+        bytes32 structHash =
+            keccak256(abi.encode(staking.ALLOCATE_CASHBACK_TYPEHASH(), alice, 5 ether, uint256(201), expiries[1]));
+        bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(fakePk, digest);
+        sigs[1] = abi.encodePacked(r, s, v);
+
+        vm.expectRevert(IRNBWStaking.InvalidSignature.selector);
+        staking.batchAllocateCashbackWithSignature(users, amounts, nonces, expiries, sigs);
+    }
+
+    function test_EmergencyWithdrawNonRnbwToken() public {
+        MockERC20 otherToken = new MockERC20("Other", "OTH", 18);
+        otherToken.mint(address(staking), 500 ether);
+
+        uint256 safeBefore = otherToken.balanceOf(admin);
+        vm.prank(admin);
+        staking.emergencyWithdraw(address(otherToken), 500 ether);
+        uint256 safeAfter = otherToken.balanceOf(admin);
+
+        assertEq(safeAfter - safeBefore, 500 ether);
+    }
+
+    function test_ExistingStakerCanAddBelowMinimum() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+
+        rnbwToken.approve(address(staking), 0.5 ether);
+        staking.stake(0.5 ether);
+        vm.stopPrank();
+
+        (uint256 stakedAmount,,,,,,,) = staking.getPosition(alice);
+        assertGt(stakedAmount, 100 ether);
+    }
+
+    function test_PauseRevertUnauthorized() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.pause();
+    }
+
+    function test_UnpauseRevertUnauthorized() public {
+        vm.prank(admin);
+        staking.pause();
+
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.unpause();
+    }
+
+    function test_AddTrustedSignerRevertUnauthorized() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.addTrustedSigner(makeAddr("newSignerUnauthorized"));
+    }
+
+    function test_RemoveTrustedSignerRevertUnauthorized() public {
+        address newSigner = makeAddr("newSignerUnauthorizedRemove");
+
+        vm.prank(admin);
+        staking.addTrustedSigner(newSigner);
+
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.removeTrustedSigner(newSigner);
+    }
+
+    function test_SetExitFeeBpsRevertUnauthorized() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.setExitFeeBps(1200);
+    }
+
+    function test_SetMinStakeAmountRevertUnauthorized() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.setMinStakeAmount(2 ether);
+    }
+
+    function test_EmergencyWithdrawRevertUnauthorized() public {
+        MockERC20 otherToken = new MockERC20("Other Unauthorized", "OTHU", 18);
+        otherToken.mint(address(staking), 100 ether);
+
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.emergencyWithdraw(address(otherToken), 1 ether);
+    }
+
+    function test_BatchAllocateCashbackEmptyArraysReverts() public {
+        address[] memory users = new address[](0);
+        uint256[] memory amounts = new uint256[](0);
+        uint256[] memory nonces = new uint256[](0);
+        uint256[] memory expiries = new uint256[](0);
+        bytes[] memory sigs = new bytes[](0);
+
+        vm.expectRevert(IRNBWStaking.EmptyBatch.selector);
+        staking.batchAllocateCashbackWithSignature(users, amounts, nonces, expiries, sigs);
+    }
+
+    function test_AllocateCashbackExpiryAtCurrentTimestampAllowed() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(10 ether);
+
+        uint256 nonce = 777;
+        uint256 expiry = block.timestamp;
+        bytes memory sig = _signAllocateCashback(alice, 10 ether, nonce, expiry);
+
+        staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, sig);
+
+        assertTrue(staking.isNonceUsed(alice, nonce));
+    }
+
+    function test_AllocateCashbackRevertExpiredOneSecondLater() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(10 ether);
+
+        uint256 nonce = 778;
+        uint256 expiry = block.timestamp;
+        bytes memory sig = _signAllocateCashback(alice, 10 ether, nonce, expiry);
+
+        vm.warp(block.timestamp + 1);
+        vm.expectRevert(IRNBWStaking.SignatureExpired.selector);
+        staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, sig);
+    }
+
+    function test_ProposeSafeOverwritePendingSafe() public {
+        address safeA = makeAddr("safeA");
+        address safeB = makeAddr("safeB");
+
+        vm.prank(admin);
+        staking.proposeSafe(safeA);
+        assertEq(staking.pendingSafe(), safeA);
+
+        vm.prank(admin);
+        staking.proposeSafe(safeB);
+        assertEq(staking.pendingSafe(), safeB);
+
+        vm.prank(safeA);
+        vm.expectRevert(IRNBWStaking.NoPendingSafe.selector);
+        staking.acceptSafe();
+
+        vm.prank(safeB);
+        staking.acceptSafe();
+
+        assertEq(staking.safe(), safeB);
+        assertEq(staking.pendingSafe(), address(0));
+    }
+
+    function test_CancelProposedSafe() public {
+        address newSafe = makeAddr("newSafe");
+        vm.prank(admin);
+        staking.proposeSafe(newSafe);
+        assertEq(staking.pendingSafe(), newSafe);
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, false);
+        emit IRNBWStaking.SafeProposalCancelled(admin, newSafe);
+        staking.cancelProposedSafe();
+        assertEq(staking.pendingSafe(), address(0));
+    }
+
+    function test_CancelProposedSafeRevertNoPending() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.NoPendingSafe.selector);
+        staking.cancelProposedSafe();
+    }
+
+    function test_CancelProposedSafeRevertUnauthorized() public {
+        address newSafe = makeAddr("newSafe");
+        vm.prank(admin);
+        staking.proposeSafe(newSafe);
+
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.cancelProposedSafe();
+    }
 }
