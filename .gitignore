@@ -15,3 +15,4 @@ docs/
 .env.staging
 .env.production
 .idea
+lcov.info
