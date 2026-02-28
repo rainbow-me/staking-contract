@@ -1237,6 +1237,8 @@ contract RNBWStakingTest is Test {
         assertEq(staking.pendingSafe(), newSafe);
 
         vm.prank(admin);
+        vm.expectEmit(true, true, false, false);
+        emit IRNBWStaking.SafeProposalCancelled(admin, newSafe);
         staking.cancelProposedSafe();
         assertEq(staking.pendingSafe(), address(0));
     }
