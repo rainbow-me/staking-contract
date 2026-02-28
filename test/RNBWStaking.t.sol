@@ -944,8 +944,9 @@ contract RNBWStakingTest is Test {
         _depositCashback(50 ether);
 
         uint256 fakePk = 0xDEAD;
-        bytes32 structHash =
-            keccak256(abi.encode(staking.ALLOCATE_CASHBACK_TYPEHASH(), alice, 10 ether, uint256(0), block.timestamp + 1 hours));
+        bytes32 structHash = keccak256(
+            abi.encode(staking.ALLOCATE_CASHBACK_TYPEHASH(), alice, 10 ether, uint256(0), block.timestamp + 1 hours)
+        );
         bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(fakePk, digest);
         bytes memory sig = abi.encodePacked(r, s, v);
@@ -1034,14 +1035,15 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         staking.unstakeAll();
 
-        (,,,uint256 stakingStart,,,,) = staking.getPosition(alice);
+        (,,, uint256 stakingStart,,,,) = staking.getPosition(alice);
         assertEq(stakingStart, 0);
 
         vm.warp(block.timestamp + 1 days);
         staking.stake(50 ether);
         vm.stopPrank();
 
-        (uint256 stakedAmount,, uint256 lastUpdate, uint256 newStart, uint256 cashback, uint256 totalStaked,,) = staking.getPosition(alice);
+        (uint256 stakedAmount,, uint256 lastUpdate, uint256 newStart, uint256 cashback, uint256 totalStaked,,) =
+            staking.getPosition(alice);
         assertGt(stakedAmount, 0);
         assertGt(newStart, 0);
         assertGt(lastUpdate, 0);
