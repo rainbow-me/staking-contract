@@ -313,8 +313,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @inheritdoc IRNBWStaking
     function cancelProposedSafe() external onlySafe {
         if (pendingSafe == address(0)) revert NoPendingSafe();
+        address cancelled = pendingSafe;
         pendingSafe = address(0);
-        emit SafeProposed(safe, address(0));
+        emit SafeProposalCancelled(safe, cancelled);
     }
 
     /// @inheritdoc IRNBWStaking

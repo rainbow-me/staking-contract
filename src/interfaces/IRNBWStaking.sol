@@ -84,6 +84,11 @@ interface IRNBWStaking {
     /// @param proposedSafe The proposed new safe address
     event SafeProposed(address indexed currentSafe, address indexed proposedSafe);
 
+    /// @notice Emitted when a pending safe proposal is cancelled
+    /// @param currentSafe The safe that cancelled the proposal
+    /// @param cancelledSafe The proposed safe that was cancelled
+    event SafeProposalCancelled(address indexed currentSafe, address indexed cancelledSafe);
+
     /// @notice Emitted when the safe (admin) address is updated (step 2 of 2-step transfer)
     /// @param oldSafe The previous safe address
     /// @param newSafe The new safe address
