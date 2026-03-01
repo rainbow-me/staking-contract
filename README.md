@@ -452,6 +452,20 @@ make verify-production ADDRESS=0x...  # verify on Basescan
 
 The contract is compatible with EIP-7702 (account abstraction via code delegation). `stake()` and `unstake()` use `msg.sender`, so a 7702-delegated EOA can call them directly through its delegated code. These functions also work with Gelato Turbo Relayer and Relay.link, which use smart account patterns where `msg.sender` is the user's address. `allocateCashbackWithSignature()` works with any `msg.sender` since it validates the trusted backend signer, not the caller.
 
+## Deployment Assumptions
+
+Deployed on Base (Optimistic Rollup). No public mempool, so signature extraction / front-running is not practical. Block time ~2s.
+
+RNBW is a standard ERC20 -- not fee-on-transfer, not deflationary, no transfer callbacks. The token address is `immutable` in the constructor. `_stake` does not do a balance-before/after check because there is no fee-on-transfer to reconcile.
+
+### Batch cashback: all-or-nothing
+
+`batchAllocateCashbackWithSignature` reverts the whole tx if any item fails. We considered skip-on-failure (emit `ClaimSkipped`, continue loop) but rejected it -- partial execution makes backend reconciliation harder, and on Base the main failure mode is rate drift causing `ZeroSharesMinted` on micro-cashbacks, which the backend should filter out before submitting.
+
+The upfront `totalCashback > cashbackReserve` check is a gas optimization (fail before N ECDSA recovers). Each `_allocateCashback` also checks individually, so the batch pre-check is redundant for correctness.
+
+Backend responsibility: filter amounts that would mint 0 shares at current rate, retry failed batches after removing stale items.
+
 ## Security
 
 security@rainbow.me
