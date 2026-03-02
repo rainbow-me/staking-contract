@@ -125,6 +125,8 @@ Steps:
 
 No token transfer happens -- RNBW is already in the contract from `fundCashbackReserve()`. It moves from reserve into `totalPooledRnbw` by minting shares.
 
+Cashback requires `shares[user] > 0`. If a user fully unstakes before their pending cashback is allocated, the call reverts with `NoStakePosition`. The backend must allocate cashback before or alongside unstaking -- never after a full exit. Unused reserve stays available for other users or can be recovered via `emergencyWithdraw`.
+
 Example:
 
 ```
