@@ -355,6 +355,7 @@ Where:
 
 - Dead shares: 1000 shares minted to `0xdead` on first deposit (prevents share inflation / first depositor attack)
 - Cashback reserve: tracked separately from staking pool, protected from `emergencyWithdraw`
+- Emergency withdraw: for RNBW, only excess above `totalPooledRnbw + cashbackReserve` can be withdrawn -- the pool and reserve are untouchable. Non-RNBW tokens have no restriction (rescue for accidental sends).
 - Min stake floor: `minStakeAmount` cannot be set below 1 RNBW
 - Inflation guard: `ZeroSharesMinted` revert protects depositors from rounding attacks
 - Residual sweep: when only dead shares remain, orphaned exit fees are swept to safe and pool is reset
