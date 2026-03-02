@@ -94,6 +94,10 @@ interface IRNBWStaking {
     /// @param newSafe The new safe address
     event SafeUpdated(address indexed oldSafe, address indexed newSafe);
 
+    /// @notice Emitted when residual dead-share dust is swept to the safe on pool empty
+    /// @param amount The residual RNBW swept
+    event ResidualSwept(uint256 amount);
+
     /// @notice Emitted when tokens are withdrawn via emergencyWithdraw
     /// @param token The token address withdrawn
     /// @param amount The amount withdrawn
