@@ -125,6 +125,10 @@ Steps:
 
 No token transfer happens -- RNBW is already in the contract from `fundCashbackReserve()`. It moves from reserve into `totalPooledRnbw` by minting shares.
 
+Cashback requires `shares[user] > 0`. If a user fully unstakes before their pending cashback is allocated, the call reverts with `NoStakePosition`. The backend must allocate cashback before or alongside unstaking -- never after a full exit. Unused reserve stays available for other users or can be recovered via `emergencyWithdraw`.
+
+Nonces are arbitrary per `(user, nonce)` -- not sequential. Nonce 9999 can be used before nonce 1. This allows out-of-order processing (retries, parallel workers, batch resubmission). The `expiry` timestamp is the invalidation mechanism -- use short expiries (e.g., 1 hour) so stale signatures die quickly.
+
 Example:
 
 ```
@@ -353,6 +357,7 @@ Where:
 
 - Dead shares: 1000 shares minted to `0xdead` on first deposit (prevents share inflation / first depositor attack)
 - Cashback reserve: tracked separately from staking pool, protected from `emergencyWithdraw`
+- Emergency withdraw: for RNBW, only excess above `totalPooledRnbw + cashbackReserve` can be withdrawn -- the pool and reserve are untouchable. Non-RNBW tokens have no restriction (rescue for accidental sends).
 - Min stake floor: `minStakeAmount` cannot be set below 1 RNBW
 - Inflation guard: `ZeroSharesMinted` revert protects depositors from rounding attacks
 - Residual sweep: when only dead shares remain, orphaned exit fees are swept to safe and pool is reset
@@ -451,6 +456,28 @@ make verify-production ADDRESS=0x...  # verify on Basescan
 ## EIP-7702 Compatibility
 
 The contract is compatible with EIP-7702 (account abstraction via code delegation). `stake()` and `unstake()` use `msg.sender`, so a 7702-delegated EOA can call them directly through its delegated code. These functions also work with Gelato Turbo Relayer and Relay.link, which use smart account patterns where `msg.sender` is the user's address. `allocateCashbackWithSignature()` works with any `msg.sender` since it validates the trusted backend signer, not the caller.
+
+## Deployment Assumptions
+
+Deployed on Base (Optimistic Rollup). No public mempool, so signature extraction / front-running is not practical. Block time ~2s.
+
+RNBW is a standard ERC20 -- not fee-on-transfer, not deflationary, no transfer callbacks. The token address is `immutable` in the constructor. `_stake` does not do a balance-before/after check because there is no fee-on-transfer to reconcile.
+
+### Batch cashback: all-or-nothing
+
+`batchAllocateCashbackWithSignature` reverts the whole tx if any item fails. We considered skip-on-failure (emit `ClaimSkipped`, continue loop) but rejected it -- partial execution makes backend reconciliation harder, and on Base the main failure mode is rate drift causing `ZeroSharesMinted` on micro-cashbacks, which the backend should filter out before submitting.
+
+The upfront `totalCashback > cashbackReserve` check is a gas optimization (fail before N ECDSA recovers). Each `_allocateCashback` also checks individually, so the batch pre-check is redundant for correctness.
+
+Backend responsibility: filter amounts that would mint 0 shares at current rate, retry failed batches after removing stale items.
+
+### No slippage protection
+
+`stake()` and `unstake()` do not accept `minSharesOut` / `minAmountOut` parameters. On Base there is no public mempool and no transaction reordering, so sandwich attacks are not practical. The exchange rate only moves favorably for stakers (exit fees increase it). This is a deliberate simplification for Base-only deployment.
+
+### No admin access to pool or reserve
+
+There is no function that lets the admin withdraw from `totalPooledRnbw` or `cashbackReserve`. Pool RNBW is only withdrawable by stakers burning shares. Cashback reserve is only consumable via signed allocations. `emergencyWithdraw` is restricted to excess RNBW above both. To wind down the protocol: pause, let users unstake, residual sweeps to safe when pool empties.
 
 ## Security
 

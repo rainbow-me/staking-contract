@@ -1020,13 +1020,14 @@ contract RNBWStakingTest is Test {
         staking.unstakeAll();
 
         uint256 safeBefore = rnbwToken.balanceOf(admin);
+        uint256 expectedResidual = staking.totalPooledRnbw() - staking.getRnbwForShares(staking.shares(alice));
         vm.prank(alice);
         staking.unstakeAll();
         uint256 safeAfter = rnbwToken.balanceOf(admin);
+        assertGt(safeAfter - safeBefore, 0);
 
         assertEq(staking.totalShares(), 0);
         assertEq(staking.totalPooledRnbw(), 0);
-        assertGt(safeAfter, safeBefore);
     }
 
     function test_RestakeAfterFullUnstake() public {
