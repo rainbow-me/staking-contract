@@ -473,6 +473,10 @@ Backend responsibility: filter amounts that would mint 0 shares at current rate,
 
 `stake()` and `unstake()` do not accept `minSharesOut` / `minAmountOut` parameters. On Base there is no public mempool and no transaction reordering, so sandwich attacks are not practical. The exchange rate only moves favorably for stakers (exit fees increase it). This is a deliberate simplification for Base-only deployment.
 
+### No admin access to pool or reserve
+
+There is no function that lets the admin withdraw from `totalPooledRnbw` or `cashbackReserve`. Pool RNBW is only withdrawable by stakers burning shares. Cashback reserve is only consumable via signed allocations. `emergencyWithdraw` is restricted to excess RNBW above both. To wind down the protocol: pause, let users unstake, residual sweeps to safe when pool empties.
+
 ## Security
 
 security@rainbow.me
