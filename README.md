@@ -127,6 +127,8 @@ No token transfer happens -- RNBW is already in the contract from `fundCashbackR
 
 Cashback requires `shares[user] > 0`. If a user fully unstakes before their pending cashback is allocated, the call reverts with `NoStakePosition`. The backend must allocate cashback before or alongside unstaking -- never after a full exit. Unused reserve stays available for other users or can be recovered via `emergencyWithdraw`.
 
+Nonces are arbitrary per `(user, nonce)` -- not sequential. Nonce 9999 can be used before nonce 1. This allows out-of-order processing (retries, parallel workers, batch resubmission). The `expiry` timestamp is the invalidation mechanism -- use short expiries (e.g., 1 hour) so stale signatures die quickly.
+
 Example:
 
 ```
