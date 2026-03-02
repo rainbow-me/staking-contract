@@ -466,6 +466,10 @@ The upfront `totalCashback > cashbackReserve` check is a gas optimization (fail 
 
 Backend responsibility: filter amounts that would mint 0 shares at current rate, retry failed batches after removing stale items.
 
+### No slippage protection
+
+`stake()` and `unstake()` do not accept `minSharesOut` / `minAmountOut` parameters. On Base there is no public mempool and no transaction reordering, so sandwich attacks are not practical. The exchange rate only moves favorably for stakers (exit fees increase it). This is a deliberate simplification for Base-only deployment.
+
 ## Security
 
 security@rainbow.me
