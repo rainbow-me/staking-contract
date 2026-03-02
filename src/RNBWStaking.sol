@@ -524,6 +524,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    reentrancy surface minimal and state fully settled first)
         if (residual > 0) {
             RNBW_TOKEN.safeTransfer(safe, residual);
+            emit ResidualSwept(residual);
         }
 
         // 10. Emit events
