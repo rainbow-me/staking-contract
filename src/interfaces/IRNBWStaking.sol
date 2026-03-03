@@ -79,6 +79,12 @@ interface IRNBWStaking {
     /// @param newReserve The total cashback reserve after funding
     event CashbackReserveFunded(address indexed from, uint256 amount, uint256 newReserve);
 
+    /// @notice Emitted when the admin reclaims RNBW from the cashback reserve
+    /// @param to The recipient's address (safe)
+    /// @param amount The amount of RNBW reclaimed
+    /// @param newReserve The total cashback reserve after defunding
+    event CashbackReserveDefunded(address indexed to, uint256 amount, uint256 newReserve);
+
     /// @notice Emitted when a new safe address is proposed (step 1 of 2-step transfer)
     /// @param currentSafe The current safe address that proposed the change
     /// @param proposedSafe The proposed new safe address
@@ -161,7 +167,7 @@ interface IRNBWStaking {
     /// @notice Thrown when attempting to add a signer beyond MAX_SIGNERS
     error MaxSignersReached();
 
-    /// @notice Thrown when cashback allocation exceeds the pre-funded cashbackReserve
+    /// @notice Thrown when cashback allocation or reserve defunding exceeds the available cashbackReserve
     error InsufficientCashbackBalance();
 
     /// @notice Thrown when emergencyWithdraw tries to withdraw more RNBW than excess
@@ -169,6 +175,9 @@ interface IRNBWStaking {
 
     /// @notice Thrown when acceptSafe is called but no safe transfer has been proposed
     error NoPendingSafe();
+
+    /// @notice Thrown when acceptSafe is called by someone other than the pending safe
+    error NotPendingSafe();
 
     /// @notice Thrown when a stake or cashback amount is too small to mint at least 1 share
     error ZeroSharesMinted(address user, uint256 amount);
@@ -341,6 +350,10 @@ interface IRNBWStaking {
     /// @notice Deposit RNBW to fund the cashback reserve
     /// @param amount The amount of RNBW to deposit
     function fundCashbackReserve(uint256 amount) external;
+
+    /// @notice Reclaim RNBW from the cashback reserve (returns to safe)
+    /// @param amount The amount of RNBW to reclaim
+    function defundCashbackReserve(uint256 amount) external;
 
     /// @notice Propose a new safe address (step 1 of 2-step transfer, callable by current safe only)
     /// @param newSafe The proposed new safe address

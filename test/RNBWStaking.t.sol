@@ -226,7 +226,7 @@ contract RNBWStakingTest is Test {
         vm.stopPrank();
 
         uint256 received = balanceAfter - balanceBefore;
-        uint256 expectedNet = (stakeAmount * 8500) / 10_000;
+        uint256 expectedNet = (stakeAmount * 9000) / 10_000;
         assertApproxEqAbs(received, expectedNet, staking.MINIMUM_SHARES());
     }
 
@@ -344,6 +344,47 @@ contract RNBWStakingTest is Test {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
         staking.fundCashbackReserve(0);
+    }
+
+    function test_DefundCashbackReserve() public {
+        _depositCashback(1000 ether);
+        uint256 safeBefore = rnbwToken.balanceOf(admin);
+
+        vm.prank(admin);
+        staking.defundCashbackReserve(400 ether);
+
+        assertEq(staking.cashbackReserve(), 600 ether);
+        assertEq(rnbwToken.balanceOf(admin), safeBefore + 400 ether);
+    }
+
+    function test_DefundCashbackReserveFull() public {
+        _depositCashback(500 ether);
+
+        vm.prank(admin);
+        staking.defundCashbackReserve(500 ether);
+
+        assertEq(staking.cashbackReserve(), 0);
+    }
+
+    function test_DefundCashbackReserveRevertZeroAmount() public {
+        _depositCashback(100 ether);
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
+        staking.defundCashbackReserve(0);
+    }
+
+    function test_DefundCashbackReserveRevertInsufficientBalance() public {
+        _depositCashback(100 ether);
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.InsufficientCashbackBalance.selector);
+        staking.defundCashbackReserve(101 ether);
+    }
+
+    function test_DefundCashbackReserveRevertUnauthorized() public {
+        _depositCashback(100 ether);
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.defundCashbackReserve(50 ether);
     }
 
     function test_Pause() public {
@@ -506,6 +547,12 @@ contract RNBWStakingTest is Test {
         staking.proposeSafe(makeAddr("newSafe"));
     }
 
+    function test_ProposeSafeRevertSameAsCurrent() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.NoChange.selector);
+        staking.proposeSafe(admin);
+    }
+
     function test_AcceptSafeRevertNoPending() public {
         vm.prank(alice);
         vm.expectRevert(IRNBWStaking.NoPendingSafe.selector);
@@ -518,7 +565,7 @@ contract RNBWStakingTest is Test {
         staking.proposeSafe(newSafe);
 
         vm.prank(alice);
-        vm.expectRevert(IRNBWStaking.NoPendingSafe.selector);
+        vm.expectRevert(IRNBWStaking.NotPendingSafe.selector);
         staking.acceptSafe();
     }
 
@@ -557,8 +604,8 @@ contract RNBWStakingTest is Test {
 
     function test_SetExitFeeBps() public {
         vm.prank(admin);
-        staking.setExitFeeBps(1000);
-        assertEq(staking.exitFeeBps(), 1000);
+        staking.setExitFeeBps(2000);
+        assertEq(staking.exitFeeBps(), 2000);
     }
 
     function test_SetExitFeeBpsRevertTooHigh() public {
@@ -576,7 +623,7 @@ contract RNBWStakingTest is Test {
     function test_SetExitFeeBpsRevertNoChange() public {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.NoChange.selector);
-        staking.setExitFeeBps(1500);
+        staking.setExitFeeBps(1000);
     }
 
     function test_SetMinStakeAmount() public {
@@ -614,14 +661,14 @@ contract RNBWStakingTest is Test {
         uint256 aliceShares = staking.shares(alice);
 
         vm.prank(admin);
-        staking.setExitFeeBps(1000);
+        staking.setExitFeeBps(2000);
 
         uint256 balBefore = rnbwToken.balanceOf(alice);
         vm.prank(alice);
         staking.unstake(aliceShares);
         uint256 received = rnbwToken.balanceOf(alice) - balBefore;
 
-        assertApproxEqAbs(received, 90 ether, staking.MINIMUM_SHARES());
+        assertApproxEqAbs(received, 80 ether, staking.MINIMUM_SHARES());
     }
 
     function test_ShareInflationAttackMitigatedByDeadShares() public {
@@ -637,7 +684,7 @@ contract RNBWStakingTest is Test {
 
         uint256 deadShares = staking.MINIMUM_SHARES();
         assertEq(staking.totalShares(), 1 + deadShares);
-        assertGt(staking.totalPooledRnbw(), 1 ether);
+        assertGt(staking.totalPooledRnbw(), 0.5 ether);
 
         vm.startPrank(bob);
         rnbwToken.approve(address(staking), 1 ether);
@@ -1165,6 +1212,18 @@ contract RNBWStakingTest is Test {
         staking.emergencyWithdraw(address(otherToken), 1 ether);
     }
 
+    function test_EmergencyWithdrawRevertZeroAmount() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
+        staking.emergencyWithdraw(address(rnbwToken), 0);
+    }
+
+    function test_EmergencyWithdrawRevertZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
+        staking.emergencyWithdraw(address(0), 1 ether);
+    }
+
     function test_BatchAllocateCashbackEmptyArraysReverts() public {
         address[] memory users = new address[](0);
         uint256[] memory amounts = new uint256[](0);
@@ -1223,7 +1282,7 @@ contract RNBWStakingTest is Test {
         assertEq(staking.pendingSafe(), safeB);
 
         vm.prank(safeA);
-        vm.expectRevert(IRNBWStaking.NoPendingSafe.selector);
+        vm.expectRevert(IRNBWStaking.NotPendingSafe.selector);
         staking.acceptSafe();
 
         vm.prank(safeB);
