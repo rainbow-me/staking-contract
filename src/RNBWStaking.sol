@@ -116,17 +116,23 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function stake(uint256 amount) external nonReentrant whenNotPaused {
-        _stake(msg.sender, amount);
+        _stake(msg.sender, msg.sender, amount);
     }
 
     /// @inheritdoc IRNBWStaking
-    function unstake(uint256 sharesToBurn) external nonReentrant whenNotPaused {
-        _unstake(msg.sender, sharesToBurn);
+    function stakeFor(address recipient, uint256 amount) external nonReentrant whenNotPaused {
+        if (recipient == address(0)) revert ZeroAddress();
+        _stake(msg.sender, recipient, amount);
     }
 
     /// @inheritdoc IRNBWStaking
-    function unstakeAll() external nonReentrant whenNotPaused {
-        _unstake(msg.sender, shares[msg.sender]);
+    function unstake(uint256 sharesToBurn) external nonReentrant whenNotPaused returns (uint256 netAmount) {
+        netAmount = _unstake(msg.sender, sharesToBurn);
+    }
+
+    /// @inheritdoc IRNBWStaking
+    function unstakeAll() external nonReentrant whenNotPaused returns (uint256 netAmount) {
+        netAmount = _unstake(msg.sender, shares[msg.sender]);
     }
 
     /// @inheritdoc IRNBWStaking
@@ -423,15 +429,17 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @dev Core staking logic
     /// Flow: validate → transfer tokens → mint shares → update metadata
-    function _stake(address user, uint256 amount) internal {
+    /// @param from The address tokens are pulled from (via safeTransferFrom)
+    /// @param user The address that receives shares and owns the position
+    function _stake(address from, address user, uint256 amount) internal {
         // 1. Validate amount
         if (amount == 0) revert ZeroAmount();
         if (shares[user] == 0 && amount < minStakeAmount) {
             revert BelowMinimumStake(user, amount, minStakeAmount);
         }
 
-        // 2. Transfer RNBW tokens from user to contract
-        RNBW_TOKEN.safeTransferFrom(user, address(this), amount);
+        // 2. Transfer RNBW tokens from sender to contract
+        RNBW_TOKEN.safeTransferFrom(from, address(this), amount);
 
         // 3. Calculate shares to mint based on current exchange rate
         //    Formula: sharesToMint = (amount * totalShares) / totalPooledRnbw
@@ -472,7 +480,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @dev Core unstaking logic
     /// Flow: validate → calculate value & fee → burn shares → transfer net amount
     /// Exit fee stays in pool, increasing exchange rate for remaining stakers
-    function _unstake(address user, uint256 sharesToBurn) internal {
+    function _unstake(address user, uint256 sharesToBurn) internal returns (uint256 netAmount) {
         // 1. Validate request
         if (sharesToBurn == 0) revert ZeroAmount();
         if (shares[user] == 0) revert NoStakePosition(user);
@@ -489,7 +497,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    Rounds up to ensure fractional wei always favors the protocol
         //    (user pays at most 1 wei more, protocol is never short-changed).
         uint256 exitFee = Math.mulDiv(rnbwValue, exitFeeBps, BASIS_POINTS, Math.Rounding.Ceil);
-        uint256 netAmount = rnbwValue - exitFee;
+        netAmount = rnbwValue - exitFee;
         if (netAmount == 0) revert ZeroUnstakeAmount(user, rnbwValue);
 
         // 4. Invariant check: the pool must always have enough RNBW to cover the
