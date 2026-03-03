@@ -346,6 +346,47 @@ contract RNBWStakingTest is Test {
         staking.fundCashbackReserve(0);
     }
 
+    function test_DefundCashbackReserve() public {
+        _depositCashback(1000 ether);
+        uint256 safeBefore = rnbwToken.balanceOf(admin);
+
+        vm.prank(admin);
+        staking.defundCashbackReserve(400 ether);
+
+        assertEq(staking.cashbackReserve(), 600 ether);
+        assertEq(rnbwToken.balanceOf(admin), safeBefore + 400 ether);
+    }
+
+    function test_DefundCashbackReserveFull() public {
+        _depositCashback(500 ether);
+
+        vm.prank(admin);
+        staking.defundCashbackReserve(500 ether);
+
+        assertEq(staking.cashbackReserve(), 0);
+    }
+
+    function test_DefundCashbackReserveRevertZeroAmount() public {
+        _depositCashback(100 ether);
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
+        staking.defundCashbackReserve(0);
+    }
+
+    function test_DefundCashbackReserveRevertInsufficientBalance() public {
+        _depositCashback(100 ether);
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.InsufficientCashbackBalance.selector);
+        staking.defundCashbackReserve(101 ether);
+    }
+
+    function test_DefundCashbackReserveRevertUnauthorized() public {
+        _depositCashback(100 ether);
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.defundCashbackReserve(50 ether);
+    }
+
     function test_Pause() public {
         vm.prank(admin);
         staking.pause();
