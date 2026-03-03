@@ -1067,7 +1067,6 @@ contract RNBWStakingTest is Test {
         staking.unstakeAll();
 
         uint256 safeBefore = rnbwToken.balanceOf(admin);
-        uint256 expectedResidual = staking.totalPooledRnbw() - staking.getRnbwForShares(staking.shares(alice));
         vm.prank(alice);
         staking.unstakeAll();
         uint256 safeAfter = rnbwToken.balanceOf(admin);
@@ -1349,7 +1348,7 @@ contract RNBWStakingTest is Test {
         assertEq(stakingStartTime, block.timestamp);
         assertEq(totalStaked, 100 ether);
 
-        (,, , uint256 aliceStart,, uint256 aliceStaked,,) = staking.getPosition(alice);
+        (,,, uint256 aliceStart,, uint256 aliceStaked,,) = staking.getPosition(alice);
         assertEq(aliceStart, 0);
         assertEq(aliceStaked, 0);
     }
