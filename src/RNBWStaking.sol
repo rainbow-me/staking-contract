@@ -501,10 +501,10 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (netAmount == 0) revert ZeroUnstakeAmount(user, rnbwValue);
 
         // 4. Invariant check: the pool must always have enough RNBW to cover the
-        //    net withdrawal. This should never fire because netAmount ≤ rnbwValue
-        //    and rnbwValue is derived from totalPooledRnbw, but we guard against
-        //    any future rounding or logic change that could violate this.
-        if (totalPooledRnbw < netAmount) revert AccountingError();
+        //    full operation. This should never fire because rnbwValue is derived
+        //    from totalPooledRnbw via integer division (sharesToBurn ≤ totalShares),
+        //    but we guard against any future rounding or logic change.
+        if (totalPooledRnbw < rnbwValue) revert AccountingError();
 
         // 5. Burn user's shares and update global totals
         //    NOTE: Exit fee stays in pool (totalPooledRnbw only decreases by netAmount)
