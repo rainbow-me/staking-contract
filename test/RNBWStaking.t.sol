@@ -1067,7 +1067,6 @@ contract RNBWStakingTest is Test {
         staking.unstakeAll();
 
         uint256 safeBefore = rnbwToken.balanceOf(admin);
-        uint256 expectedResidual = staking.totalPooledRnbw() - staking.getRnbwForShares(staking.shares(alice));
         vm.prank(alice);
         staking.unstakeAll();
         uint256 safeAfter = rnbwToken.balanceOf(admin);
@@ -1319,5 +1318,142 @@ contract RNBWStakingTest is Test {
         vm.prank(alice);
         vm.expectRevert(IRNBWStaking.Unauthorized.selector);
         staking.cancelProposedSafe();
+    }
+
+    function test_StakeFor() public {
+        uint256 amount = 100 ether;
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), amount);
+        staking.stakeFor(bob, amount);
+        vm.stopPrank();
+
+        uint256 deadShares = staking.MINIMUM_SHARES();
+        assertEq(staking.shares(bob), amount - deadShares);
+        assertEq(staking.shares(alice), 0);
+        assertEq(rnbwToken.balanceOf(alice), INITIAL_BALANCE - amount);
+        assertEq(staking.totalPooledRnbw(), amount);
+    }
+
+    function test_StakeForMetadata() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stakeFor(bob, 100 ether);
+        vm.stopPrank();
+
+        (uint256 stakedAmount, uint256 userShares,, uint256 stakingStartTime,, uint256 totalStaked,,) =
+            staking.getPosition(bob);
+        assertGt(stakedAmount, 0);
+        assertGt(userShares, 0);
+        assertEq(stakingStartTime, block.timestamp);
+        assertEq(totalStaked, 100 ether);
+
+        (,,, uint256 aliceStart,, uint256 aliceStaked,,) = staking.getPosition(alice);
+        assertEq(aliceStart, 0);
+        assertEq(aliceStaked, 0);
+    }
+
+    function test_StakeForRecipientCanUnstake() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stakeFor(bob, 100 ether);
+        vm.stopPrank();
+
+        uint256 bobShares = staking.shares(bob);
+        uint256 bobBalBefore = rnbwToken.balanceOf(bob);
+
+        vm.prank(bob);
+        staking.unstake(bobShares);
+
+        assertEq(staking.shares(bob), 0);
+        assertGt(rnbwToken.balanceOf(bob), bobBalBefore);
+    }
+
+    function test_StakeForRevertZeroRecipient() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
+        staking.stakeFor(address(0), 100 ether);
+        vm.stopPrank();
+    }
+
+    function test_StakeForRevertZeroAmount() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
+        staking.stakeFor(bob, 0);
+    }
+
+    function test_StakeForRevertBelowMinimum() public {
+        uint256 amount = 0.5 ether;
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), amount);
+        vm.expectRevert(
+            abi.encodeWithSelector(IRNBWStaking.BelowMinimumStake.selector, bob, amount, staking.minStakeAmount())
+        );
+        staking.stakeFor(bob, amount);
+        vm.stopPrank();
+    }
+
+    function test_StakeForExistingPosition() public {
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 bobSharesBefore = staking.shares(bob);
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 50 ether);
+        staking.stakeFor(bob, 50 ether);
+        vm.stopPrank();
+
+        assertGt(staking.shares(bob), bobSharesBefore);
+        assertEq(staking.totalPooledRnbw(), 150 ether);
+    }
+
+    function test_StakeForRevertContractRecipient() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        vm.expectRevert(IRNBWStaking.InvalidRecipient.selector);
+        staking.stakeFor(address(staking), 100 ether);
+        vm.stopPrank();
+    }
+
+    function test_StakeForRevertDeadAddressRecipient() public {
+        address dead = staking.DEAD_ADDRESS();
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        vm.expectRevert(IRNBWStaking.InvalidRecipient.selector);
+        staking.stakeFor(dead, 100 ether);
+        vm.stopPrank();
+    }
+
+    function test_DustUnstakeBurnsSharesWithoutTransfer() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(1000 ether);
+        for (uint256 i = 0; i < 10; ++i) {
+            bytes memory sig = _signAllocateCashback(alice, 100 ether, i, block.timestamp + 1 hours);
+            staking.allocateCashbackWithSignature(alice, 100 ether, i, block.timestamp + 1 hours, sig);
+        }
+
+        uint256 aliceShares = staking.shares(alice);
+        vm.startPrank(alice);
+        staking.unstake(aliceShares - 1);
+
+        uint256 remaining = staking.shares(alice);
+        assertEq(remaining, 1);
+
+        uint256 balBefore = rnbwToken.balanceOf(alice);
+        staking.unstake(1);
+        uint256 balAfter = rnbwToken.balanceOf(alice);
+        vm.stopPrank();
+
+        assertEq(staking.shares(alice), 0);
+        assertGe(balAfter, balBefore);
     }
 }

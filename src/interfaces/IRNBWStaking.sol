@@ -182,9 +182,6 @@ interface IRNBWStaking {
     /// @notice Thrown when a stake or cashback amount is too small to mint at least 1 share
     error ZeroSharesMinted(address user, uint256 amount);
 
-    /// @notice Thrown when ceil-rounded exit fee consumes entire unstake amount (dust protection)
-    error ZeroUnstakeAmount(address user, uint256 rnbwValue);
-
     /// @notice Thrown when partial unstake is attempted but not allowed
     error PartialUnstakeDisabled(address user, uint256 sharesToBurn, uint256 totalUserShares);
 
@@ -200,6 +197,9 @@ interface IRNBWStaking {
     /// @notice Thrown when an internal accounting invariant is violated (should never happen)
     error AccountingError();
 
+    /// @notice Thrown when stakeFor is called with a forbidden recipient (contract itself or dead address)
+    error InvalidRecipient();
+
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -208,12 +208,19 @@ interface IRNBWStaking {
     /// @param amount The amount of RNBW to stake
     function stake(uint256 amount) external;
 
+    /// @notice Stake RNBW tokens on behalf of another address. Tokens come from msg.sender, shares go to recipient.
+    /// @param recipient The address that will receive the shares
+    /// @param amount The amount of RNBW to stake
+    function stakeFor(address recipient, uint256 amount) external;
+
     /// @notice Burn shares to unstake RNBW. An exit fee is deducted and stays in the pool.
     /// @param sharesToBurn The number of shares to burn
-    function unstake(uint256 sharesToBurn) external;
+    /// @return netAmount The net RNBW transferred to the user after exit fee
+    function unstake(uint256 sharesToBurn) external returns (uint256 netAmount);
 
     /// @notice Burn all of the caller's shares to unstake RNBW. Convenience wrapper around unstake().
-    function unstakeAll() external;
+    /// @return netAmount The net RNBW transferred to the user after exit fee
+    function unstakeAll() external returns (uint256 netAmount);
 
     /// @notice Allocate cashback to a staker by minting shares (backend-only, signature-gated)
     /// @param user The recipient staker's address
