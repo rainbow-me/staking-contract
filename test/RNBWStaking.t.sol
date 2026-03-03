@@ -559,7 +559,7 @@ contract RNBWStakingTest is Test {
         staking.proposeSafe(newSafe);
 
         vm.prank(alice);
-        vm.expectRevert(IRNBWStaking.NoPendingSafe.selector);
+        vm.expectRevert(IRNBWStaking.NotPendingSafe.selector);
         staking.acceptSafe();
     }
 
@@ -1264,7 +1264,7 @@ contract RNBWStakingTest is Test {
         assertEq(staking.pendingSafe(), safeB);
 
         vm.prank(safeA);
-        vm.expectRevert(IRNBWStaking.NoPendingSafe.selector);
+        vm.expectRevert(IRNBWStaking.NotPendingSafe.selector);
         staking.acceptSafe();
 
         vm.prank(safeB);

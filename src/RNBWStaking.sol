@@ -320,7 +320,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function acceptSafe() external {
-        if (msg.sender != pendingSafe) revert NoPendingSafe();
+        if (pendingSafe == address(0)) revert NoPendingSafe();
+        if (msg.sender != pendingSafe) revert NotPendingSafe();
         emit SafeUpdated(safe, msg.sender);
         safe = msg.sender;
         pendingSafe = address(0);

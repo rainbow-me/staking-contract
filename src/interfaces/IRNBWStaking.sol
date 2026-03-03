@@ -176,6 +176,9 @@ interface IRNBWStaking {
     /// @notice Thrown when acceptSafe is called but no safe transfer has been proposed
     error NoPendingSafe();
 
+    /// @notice Thrown when acceptSafe is called by someone other than the pending safe
+    error NotPendingSafe();
+
     /// @notice Thrown when a stake or cashback amount is too small to mint at least 1 share
     error ZeroSharesMinted(address user, uint256 amount);
 
