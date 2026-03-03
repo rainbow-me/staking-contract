@@ -88,7 +88,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         RNBW_TOKEN = IERC20(_rnbwToken);
         safe = _safe;
 
-        exitFeeBps = 1500;
+        exitFeeBps = 1000;
         minStakeAmount = 1e18;
         allowPartialUnstake = false;
 
@@ -293,6 +293,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function emergencyWithdraw(address token, uint256 amount) external onlySafe {
+        if (token == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
         if (token == address(RNBW_TOKEN)) {
             uint256 balance = RNBW_TOKEN.balanceOf(address(this));
             uint256 reserved = totalPooledRnbw + cashbackReserve;
@@ -306,6 +308,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @inheritdoc IRNBWStaking
     function proposeSafe(address newSafe) external onlySafe {
         if (newSafe == address(0)) revert ZeroAddress();
+        if (newSafe == safe) revert NoChange();
         pendingSafe = newSafe;
         emit SafeProposed(safe, newSafe);
     }
@@ -320,7 +323,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function acceptSafe() external {
-        if (msg.sender != pendingSafe) revert NoPendingSafe();
+        if (pendingSafe == address(0)) revert NoPendingSafe();
+        if (msg.sender != pendingSafe) revert NotPendingSafe();
         emit SafeUpdated(safe, msg.sender);
         safe = msg.sender;
         pendingSafe = address(0);
@@ -342,6 +346,15 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         RNBW_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
         cashbackReserve += amount;
         emit CashbackReserveFunded(msg.sender, amount, cashbackReserve);
+    }
+
+    /// @inheritdoc IRNBWStaking
+    function defundCashbackReserve(uint256 amount) external onlySafe {
+        if (amount == 0) revert ZeroAmount();
+        if (amount > cashbackReserve) revert InsufficientCashbackBalance();
+        cashbackReserve -= amount;
+        RNBW_TOKEN.safeTransfer(safe, amount);
+        emit CashbackReserveDefunded(safe, amount, cashbackReserve);
     }
 
     /// @inheritdoc IRNBWStaking
@@ -472,7 +485,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    Formula: rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares
         uint256 rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares;
 
-        // 3. Calculate exit fee (e.g., 15% of value)
+        // 3. Calculate exit fee (e.g., 10% of value)
         //    Rounds up to ensure fractional wei always favors the protocol
         //    (user pays at most 1 wei more, protocol is never short-changed).
         uint256 exitFee = Math.mulDiv(rnbwValue, exitFeeBps, BASIS_POINTS, Math.Rounding.Ceil);
