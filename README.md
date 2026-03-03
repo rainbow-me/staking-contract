@@ -11,7 +11,7 @@ Shares-based staking contract for $RNBW on Base. Exit fees stay in the pool and 
 
 | Feature | Details |
 |---------|---------|
-| Staking | `stake()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702) |
+| Staking | `stake()` / `stakeFor()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702). `stakeFor` enables third-party integrations (e.g., liquid staking token). |
 | Unstaking | `unstake()` -- user calls directly or via relay. Partial unstake toggleable by admin (default: disabled) |
 | Exit fee | Configurable 1%--75%, default 10% -- stays in pool |
 | Cashback | Backend allocates via `allocateCashbackWithSignature()` -- mints shares immediately in one step |
@@ -37,18 +37,20 @@ The first staker gets shares at a 1:1 ratio (minus 1000 dead shares for inflatio
 
 ### Staking Flow
 
-Entry point: `stake(amount)` -- user calls directly or via relay. `msg.sender` is always the user.
+Entry points:
+- `stake(amount)` -- user calls directly or via relay. `msg.sender` is both the token source and share recipient.
+- `stakeFor(recipient, amount)` -- tokens come from `msg.sender`, shares go to `recipient`. Built for third-party integrations like a liquid staking token (xRNBW). Reverts if `recipient` is `address(0)`, `address(this)`, or `DEAD_ADDRESS`.
 
 Preview: `previewStake(amount)` returns `sharesToMint` (returns 0 for dust amounts).
 
 Steps:
 
-1. Validate -- amount > 0, first-time stakers must meet `minStakeAmount`.
-2. Transfer -- RNBW moves from user to contract via `safeTransferFrom`.
+1. Validate -- amount > 0, first-time stakers must meet `minStakeAmount`. `stakeFor` additionally rejects forbidden recipients.
+2. Transfer -- RNBW moves from `msg.sender` (not recipient) to contract via `safeTransferFrom`.
 3. Calculate shares -- `sharesToMint = (amount * totalShares) / totalPooledRnbw`. First staker: `sharesToMint = amount - 1000` (dead shares minted to `0xdead`).
 4. Guard -- reverts with `ZeroSharesMinted` if shares round to 0.
-5. Mint -- update `shares[user]`, `totalShares`, `totalPooledRnbw`.
-6. Metadata -- set `stakingStartTime` (first stake), accumulate `totalRnbwStaked`.
+5. Mint -- update `shares[recipient]`, `totalShares`, `totalPooledRnbw`.
+6. Metadata -- set `stakingStartTime` (first stake), accumulate `totalRnbwStaked` on the recipient's position.
 
 Example:
 
@@ -77,14 +79,16 @@ Preview: `previewUnstake(sharesToBurn)` returns `(rnbwValue, exitFee, netReceive
 
 Steps:
 
+Both functions return `netAmount` (the RNBW transferred to the user after exit fee).
+
 1. Validate -- shares > 0, sufficient balance, partial unstake check.
 2. Calculate value -- `rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares`.
 3. Exit fee -- `exitFee = rnbwValue * exitFeeBps / 10,000` (ceil-rounded, default 10%).
-4. Guard -- reverts with `ZeroUnstakeAmount` if net amount is 0.
+4. Net amount -- if ceil-rounded fee consumes everything (dust), `netAmount = 0` and shares are burned with no transfer (lets users clear dust positions).
 5. Burn shares -- deduct from user and totals. Only `netAmount` leaves the pool; exit fee stays.
 6. Residual sweep -- if only dead shares remain, sweep pool to safe and reset to clean slate.
 7. Metadata -- track `totalRnbwUnstaked`, `totalExitFeePaid`. Reset `stakingStartTime` on full exit.
-8. Transfer -- send `netAmount` to user.
+8. Transfer -- send `netAmount` to user (skipped when `netAmount == 0`).
 
 Example:
 
@@ -362,10 +366,11 @@ Where:
 - Inflation guard: `ZeroSharesMinted` revert protects depositors from rounding attacks
 - Residual sweep: when only dead shares remain, orphaned exit fees are swept to safe and pool is reset
 - Exit fee rounding: ceiling division ensures fractional wei favors the protocol
-- Dust unstake guard: `ZeroUnstakeAmount` revert prevents ceil-rounded exit fee from consuming 100% of a dust unstake
+- Dust unstake handling: when ceil-rounded exit fee consumes 100% of a dust unstake, shares are burned with no transfer (clears dust positions without reverting)
 - 2-step safe transfer: `proposeSafe()` + `acceptSafe()` prevents transfer to wrong address
 - Partial unstake toggle: `allowPartialUnstake` (default: disabled)
 - Preview dust guard: `previewStake()` returns 0 instead of reverting for dust amounts
+- Recipient guards: `stakeFor` rejects `address(0)`, `address(this)`, and `DEAD_ADDRESS` to prevent token locking and dead-share corruption
 - Batch size limit: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve check
 - Rich error context: user-facing errors include address and value params for debugging
 
@@ -379,7 +384,7 @@ All user-facing errors include contextual parameters for off-chain debugging. Ad
 | `InsufficientShares` | `(user, requested, available)` | `_unstake` |
 | `BelowMinimumStake` | `(user, amount, minRequired)` | `_stake` |
 | `ZeroSharesMinted` | `(user, amount)` | `_stake`, `_allocateCashback` |
-| `ZeroUnstakeAmount` | `(user, rnbwValue)` | `_unstake` |
+| `InvalidRecipient` | -- | `stakeFor` |
 | `PartialUnstakeDisabled` | `(user, sharesToBurn, totalUserShares)` | `_unstake` |
 
 ### Dead Shares Lifecycle
@@ -406,7 +411,7 @@ forge build
 forge test
 ```
 
-Unit tests (`RNBWStaking.t.sol`) and simulation tests (`RNBWStakingSimulation.t.sol`).
+Unit tests (`RNBWStaking.t.sol`), invariant tests (`RNBWStakingInvariant.t.sol`), and simulation tests (`RNBWStakingSimulation.t.sol`).
 
 ```shell
 forge test -vvv                                          # verbose output
@@ -478,6 +483,25 @@ Backend responsibility: filter amounts that would mint 0 shares at current rate,
 ### No admin access to pool or reserve
 
 There is no function that lets the admin withdraw from `totalPooledRnbw` or `cashbackReserve`. Pool RNBW is only withdrawable by stakers burning shares. Cashback reserve is only consumable via signed allocations. `emergencyWithdraw` is restricted to excess RNBW above both. To wind down the protocol: pause, let users unstake, residual sweeps to safe when pool empties.
+
+## Future: Liquid Staking Token (xRNBW)
+
+Staking positions are non-transferable -- shares live inside the contract, not as ERC20 balances. A separate liquid staking token contract (xRNBW) can sit on top to make positions transferable and DeFi-composable (DEX trading, lending collateral, LPs, etc.).
+
+```
+User → xRNBW (ERC20) → RNBWStaking
+         |                  |
+         | stakeFor(xRNBW)  |  ← xRNBW contract accumulates shares
+         | unstake(shares)  |  ← burns xRNBW, redeems underlying RNBW
+         |                  |
+         ← mint xRNBW to user
+```
+
+Deposit: xRNBW takes RNBW from the user, calls `stakeFor(address(xRNBW), amount)`, mints xRNBW 1:1 with the shares it received.
+
+Redeem: user burns xRNBW, contract calls `unstake(sharesToBurn)`, forwards `netAmount` to user.
+
+`stakeFor` and the `netAmount` return value were added specifically for this. `InvalidRecipient` keeps people from accidentally staking to the staking contract itself or `0xdead`.
 
 ## Security
 
