@@ -167,7 +167,7 @@ interface IRNBWStaking {
     /// @notice Thrown when attempting to add a signer beyond MAX_SIGNERS
     error MaxSignersReached();
 
-    /// @notice Thrown when cashback allocation exceeds the pre-funded cashbackReserve
+    /// @notice Thrown when cashback allocation or reserve defunding exceeds the available cashbackReserve
     error InsufficientCashbackBalance();
 
     /// @notice Thrown when emergencyWithdraw tries to withdraw more RNBW than excess
