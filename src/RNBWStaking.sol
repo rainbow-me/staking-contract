@@ -88,7 +88,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         RNBW_TOKEN = IERC20(_rnbwToken);
         safe = _safe;
 
-        exitFeeBps = 1500;
+        exitFeeBps = 1000;
         minStakeAmount = 1e18;
         allowPartialUnstake = false;
 
@@ -472,7 +472,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    Formula: rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares
         uint256 rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares;
 
-        // 3. Calculate exit fee (e.g., 15% of value)
+        // 3. Calculate exit fee (e.g., 10% of value)
         //    Rounds up to ensure fractional wei always favors the protocol
         //    (user pays at most 1 wei more, protocol is never short-changed).
         uint256 exitFee = Math.mulDiv(rnbwValue, exitFeeBps, BASIS_POINTS, Math.Rounding.Ceil);

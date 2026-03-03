@@ -13,7 +13,7 @@ Shares-based staking contract for $RNBW on Base. Exit fees stay in the pool and 
 |---------|---------|
 | Staking | `stake()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702) |
 | Unstaking | `unstake()` -- user calls directly or via relay. Partial unstake toggleable by admin (default: disabled) |
-| Exit fee | Configurable 1%--75%, default 15% -- stays in pool |
+| Exit fee | Configurable 1%--75%, default 10% -- stays in pool |
 | Cashback | Backend allocates via `allocateCashbackWithSignature()` -- mints shares immediately in one step |
 | Dead shares | First deposit mints 1000 shares to `0xdead` (UniswapV2-style inflation protection) |
 | Cashback reserve | Pre-funded via `fundCashbackReserve()`, tracked separately, protected from emergency withdrawal |
@@ -79,7 +79,7 @@ Steps:
 
 1. Validate -- shares > 0, sufficient balance, partial unstake check.
 2. Calculate value -- `rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares`.
-3. Exit fee -- `exitFee = rnbwValue * exitFeeBps / 10,000` (ceil-rounded, default 15%).
+3. Exit fee -- `exitFee = rnbwValue * exitFeeBps / 10,000` (ceil-rounded, default 10%).
 4. Guard -- reverts with `ZeroUnstakeAmount` if net amount is 0.
 5. Burn shares -- deduct from user and totals. Only `netAmount` leaves the pool; exit fee stays.
 6. Residual sweep -- if only dead shares remain, sweep pool to safe and reset to clean slate.
@@ -94,15 +94,15 @@ Alice: 50,000 shares, Bob: 50,000 shares
 
 --- Bob unstakes 50,000 shares ---
 rnbwValue = (50,000 * 100,000) / 100,000 = 50,000 RNBW
-exitFee   = 50,000 * 1500 / 10,000       = 7,500 RNBW
-netAmount = 50,000 - 7,500                = 42,500 RNBW
+exitFee   = 50,000 * 1000 / 10,000       = 5,000 RNBW
+netAmount = 50,000 - 5,000                = 45,000 RNBW
 
-Pool after: totalPooledRnbw = 57,500, totalShares = 50,000
-Bob receives: 42,500 RNBW
-Alice's value: 50,000 * 57,500 / 50,000 = 57,500 RNBW (+7,500 gain)
+Pool after: totalPooledRnbw = 55,000, totalShares = 50,000
+Bob receives: 45,000 RNBW
+Alice's value: 50,000 * 55,000 / 50,000 = 55,000 RNBW (+5,000 gain)
 ```
 
-The exit fee stays in the pool, increasing the exchange rate from 1.0 to 1.15 for remaining stakers.
+The exit fee stays in the pool, increasing the exchange rate from 1.0 to 1.10 for remaining stakers.
 
 ---
 
@@ -168,7 +168,7 @@ Global APY is computed off-chain by comparing on-chain state at two blocks. No i
 
 | Component | What drives it | On-chain signal |
 |-----------|---------------|-----------------|
-| Exit Fee APY | Users unstaking (15% stays in pool) | `getExchangeRate()` increases |
+| Exit Fee APY | Users unstaking (10% stays in pool) | `getExchangeRate()` increases |
 | Cashback APY | Cashback allocated to stakers | `totalCashbackAllocated` increases |
 
 Cashback does not move the exchange rate (shares and pool grow proportionally), so it must be tracked separately.

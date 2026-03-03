@@ -226,7 +226,7 @@ contract RNBWStakingTest is Test {
         vm.stopPrank();
 
         uint256 received = balanceAfter - balanceBefore;
-        uint256 expectedNet = (stakeAmount * 8500) / 10_000;
+        uint256 expectedNet = (stakeAmount * 9000) / 10_000;
         assertApproxEqAbs(received, expectedNet, staking.MINIMUM_SHARES());
     }
 
@@ -557,8 +557,8 @@ contract RNBWStakingTest is Test {
 
     function test_SetExitFeeBps() public {
         vm.prank(admin);
-        staking.setExitFeeBps(1000);
-        assertEq(staking.exitFeeBps(), 1000);
+        staking.setExitFeeBps(2000);
+        assertEq(staking.exitFeeBps(), 2000);
     }
 
     function test_SetExitFeeBpsRevertTooHigh() public {
@@ -576,7 +576,7 @@ contract RNBWStakingTest is Test {
     function test_SetExitFeeBpsRevertNoChange() public {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.NoChange.selector);
-        staking.setExitFeeBps(1500);
+        staking.setExitFeeBps(1000);
     }
 
     function test_SetMinStakeAmount() public {
@@ -614,14 +614,14 @@ contract RNBWStakingTest is Test {
         uint256 aliceShares = staking.shares(alice);
 
         vm.prank(admin);
-        staking.setExitFeeBps(1000);
+        staking.setExitFeeBps(2000);
 
         uint256 balBefore = rnbwToken.balanceOf(alice);
         vm.prank(alice);
         staking.unstake(aliceShares);
         uint256 received = rnbwToken.balanceOf(alice) - balBefore;
 
-        assertApproxEqAbs(received, 90 ether, staking.MINIMUM_SHARES());
+        assertApproxEqAbs(received, 80 ether, staking.MINIMUM_SHARES());
     }
 
     function test_ShareInflationAttackMitigatedByDeadShares() public {
@@ -637,7 +637,7 @@ contract RNBWStakingTest is Test {
 
         uint256 deadShares = staking.MINIMUM_SHARES();
         assertEq(staking.totalShares(), 1 + deadShares);
-        assertGt(staking.totalPooledRnbw(), 1 ether);
+        assertGt(staking.totalPooledRnbw(), 0.5 ether);
 
         vm.startPrank(bob);
         rnbwToken.approve(address(staking), 1 ether);
