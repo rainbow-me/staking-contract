@@ -345,6 +345,15 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @inheritdoc IRNBWStaking
+    function defundCashbackReserve(uint256 amount) external onlySafe {
+        if (amount == 0) revert ZeroAmount();
+        if (amount > cashbackReserve) revert InsufficientCashbackBalance();
+        cashbackReserve -= amount;
+        RNBW_TOKEN.safeTransfer(safe, amount);
+        emit CashbackReserveDefunded(safe, amount, cashbackReserve);
+    }
+
+    /// @inheritdoc IRNBWStaking
     function setMinStakeAmount(uint256 newMinStakeAmount) external onlySafe {
         if (newMinStakeAmount < MIN_STAKE_FLOOR) revert MinStakeTooLow();
         if (newMinStakeAmount > MAX_MIN_STAKE_AMOUNT) revert MinStakeTooHigh();
