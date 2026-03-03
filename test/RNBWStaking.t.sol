@@ -547,6 +547,12 @@ contract RNBWStakingTest is Test {
         staking.proposeSafe(makeAddr("newSafe"));
     }
 
+    function test_ProposeSafeRevertSameAsCurrent() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.NoChange.selector);
+        staking.proposeSafe(admin);
+    }
+
     function test_AcceptSafeRevertNoPending() public {
         vm.prank(alice);
         vm.expectRevert(IRNBWStaking.NoPendingSafe.selector);
@@ -1204,6 +1210,12 @@ contract RNBWStakingTest is Test {
         vm.prank(alice);
         vm.expectRevert(IRNBWStaking.Unauthorized.selector);
         staking.emergencyWithdraw(address(otherToken), 1 ether);
+    }
+
+    function test_EmergencyWithdrawRevertZeroAmount() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
+        staking.emergencyWithdraw(address(rnbwToken), 0);
     }
 
     function test_BatchAllocateCashbackEmptyArraysReverts() public {

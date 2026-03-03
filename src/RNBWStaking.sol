@@ -293,6 +293,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function emergencyWithdraw(address token, uint256 amount) external onlySafe {
+        if (amount == 0) revert ZeroAmount();
         if (token == address(RNBW_TOKEN)) {
             uint256 balance = RNBW_TOKEN.balanceOf(address(this));
             uint256 reserved = totalPooledRnbw + cashbackReserve;
@@ -306,6 +307,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @inheritdoc IRNBWStaking
     function proposeSafe(address newSafe) external onlySafe {
         if (newSafe == address(0)) revert ZeroAddress();
+        if (newSafe == safe) revert NoChange();
         pendingSafe = newSafe;
         emit SafeProposed(safe, newSafe);
     }
