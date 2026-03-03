@@ -242,10 +242,10 @@ contract RNBWStakingSimulation is Test {
 
         console.log("Alice unstaked directly (no relayer)");
         console.log("Received:", received / 1e18);
-        console.log("Exit fee paid: 1,500 RNBW");
+        console.log("Exit fee paid: 1,000 RNBW");
         console.log("=== DIRECT UNSTAKE COMPLETE ===");
 
-        assertApproxEqAbs(received, 8500 ether, staking.MINIMUM_SHARES());
+        assertApproxEqAbs(received, 9000 ether, staking.MINIMUM_SHARES());
     }
 
     function test_Simulation_ResidualDustSweep() public {
@@ -453,7 +453,7 @@ contract RNBWStakingSimulation is Test {
         uint256 charlieShares = staking.shares(charlie);
         vm.prank(charlie);
         staking.unstake(charlieShares);
-        console.log("Charlie unstaked all (15% fee stays in pool)");
+        console.log("Charlie unstaked all (10% fee stays in pool)");
 
         uint256 rateAfter = staking.getExchangeRate();
         console.log("Exchange rate before:", rateBefore);
@@ -502,7 +502,7 @@ contract RNBWStakingSimulation is Test {
         uint256 bobShares = staking.shares(bob);
         vm.prank(bob);
         staking.unstake(bobShares);
-        console.log("Day 1: Bob unstakes all (15% exit fee stays in pool)");
+        console.log("Day 1: Bob unstakes all (10% exit fee stays in pool)");
 
         vm.warp(block.timestamp + 1 days);
 
