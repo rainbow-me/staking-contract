@@ -1412,4 +1412,21 @@ contract RNBWStakingTest is Test {
         assertGt(staking.shares(bob), bobSharesBefore);
         assertEq(staking.totalPooledRnbw(), 150 ether);
     }
+
+    function test_StakeForRevertContractRecipient() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        vm.expectRevert(IRNBWStaking.InvalidRecipient.selector);
+        staking.stakeFor(address(staking), 100 ether);
+        vm.stopPrank();
+    }
+
+    function test_StakeForRevertDeadAddressRecipient() public {
+        address dead = staking.DEAD_ADDRESS();
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        vm.expectRevert(IRNBWStaking.InvalidRecipient.selector);
+        staking.stakeFor(dead, 100 ether);
+        vm.stopPrank();
+    }
 }

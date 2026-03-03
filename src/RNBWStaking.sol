@@ -122,6 +122,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @inheritdoc IRNBWStaking
     function stakeFor(address recipient, uint256 amount) external nonReentrant whenNotPaused {
         if (recipient == address(0)) revert ZeroAddress();
+        if (recipient == address(this) || recipient == DEAD_ADDRESS) revert InvalidRecipient();
         _stake(msg.sender, recipient, amount);
     }
 

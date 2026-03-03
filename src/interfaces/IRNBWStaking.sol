@@ -200,6 +200,9 @@ interface IRNBWStaking {
     /// @notice Thrown when an internal accounting invariant is violated (should never happen)
     error AccountingError();
 
+    /// @notice Thrown when stakeFor is called with a forbidden recipient (contract itself or dead address)
+    error InvalidRecipient();
+
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
