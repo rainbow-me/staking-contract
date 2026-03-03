@@ -1218,6 +1218,12 @@ contract RNBWStakingTest is Test {
         staking.emergencyWithdraw(address(rnbwToken), 0);
     }
 
+    function test_EmergencyWithdrawRevertZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
+        staking.emergencyWithdraw(address(0), 1 ether);
+    }
+
     function test_BatchAllocateCashbackEmptyArraysReverts() public {
         address[] memory users = new address[](0);
         uint256[] memory amounts = new uint256[](0);
