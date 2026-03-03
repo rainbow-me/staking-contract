@@ -182,9 +182,6 @@ interface IRNBWStaking {
     /// @notice Thrown when a stake or cashback amount is too small to mint at least 1 share
     error ZeroSharesMinted(address user, uint256 amount);
 
-    /// @notice Thrown when ceil-rounded exit fee consumes entire unstake amount (dust protection)
-    error ZeroUnstakeAmount(address user, uint256 rnbwValue);
-
     /// @notice Thrown when partial unstake is attempted but not allowed
     error PartialUnstakeDisabled(address user, uint256 sharesToBurn, uint256 totalUserShares);
 
