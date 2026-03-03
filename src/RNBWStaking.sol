@@ -498,8 +498,10 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    Rounds up to ensure fractional wei always favors the protocol
         //    (user pays at most 1 wei more, protocol is never short-changed).
         uint256 exitFee = Math.mulDiv(rnbwValue, exitFeeBps, BASIS_POINTS, Math.Rounding.Ceil);
-        netAmount = rnbwValue - exitFee;
-        if (netAmount == 0) revert ZeroUnstakeAmount(user, rnbwValue);
+
+        //    If ceil-rounded fee consumes everything (dust), netAmount = 0 — shares
+        //    are burned but no tokens transfer, letting users clear dust positions.
+        netAmount = exitFee >= rnbwValue ? 0 : rnbwValue - exitFee;
 
         // 4. Invariant check: the pool must always have enough RNBW to cover the
         //    full operation. This should never fire because rnbwValue is derived
@@ -539,8 +541,10 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             meta.stakingStartTime = 0;
         }
 
-        // 8. Transfer net RNBW to user (after exit fee deduction)
-        RNBW_TOKEN.safeTransfer(user, netAmount);
+        // 8. Transfer net RNBW to user (skipped for dust burns where netAmount == 0)
+        if (netAmount > 0) {
+            RNBW_TOKEN.safeTransfer(user, netAmount);
+        }
 
         // 9. Sweep residual dust to safe (done after user transfer to keep
         //    reentrancy surface minimal and state fully settled first)

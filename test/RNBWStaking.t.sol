@@ -1429,4 +1429,32 @@ contract RNBWStakingTest is Test {
         staking.stakeFor(dead, 100 ether);
         vm.stopPrank();
     }
+
+    function test_DustUnstakeBurnsSharesWithoutTransfer() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(1000 ether);
+        for (uint256 i = 0; i < 10; ++i) {
+            bytes memory sig = _signAllocateCashback(alice, 100 ether, i, block.timestamp + 1 hours);
+            staking.allocateCashbackWithSignature(alice, 100 ether, i, block.timestamp + 1 hours, sig);
+        }
+
+        uint256 aliceShares = staking.shares(alice);
+        vm.startPrank(alice);
+        staking.unstake(aliceShares - 1);
+
+        uint256 remaining = staking.shares(alice);
+        assertEq(remaining, 1);
+
+        uint256 balBefore = rnbwToken.balanceOf(alice);
+        staking.unstake(1);
+        uint256 balAfter = rnbwToken.balanceOf(alice);
+        vm.stopPrank();
+
+        assertEq(staking.shares(alice), 0);
+        assertGe(balAfter, balBefore);
+    }
 }
