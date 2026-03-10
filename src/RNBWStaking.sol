@@ -45,6 +45,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     bytes32 public constant ALLOCATE_CASHBACK_TYPEHASH =
         keccak256("AllocateCashback(address user,uint256 rnbwCashback,uint256 nonce,uint256 expiry)");
 
+    bytes32 public constant STAKE_FOR_TYPEHASH =
+        keccak256("StakeFor(address recipient,uint256 amount,uint256 nonce,uint256 expiry)");
+
     /*//////////////////////////////////////////////////////////////
                                 STORAGE
     //////////////////////////////////////////////////////////////*/
@@ -123,6 +126,26 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function stakeFor(address recipient, uint256 amount) external nonReentrant whenNotPaused {
         if (recipient == address(0)) revert ZeroAddress();
         if (recipient == address(this) || recipient == DEAD_ADDRESS) revert InvalidRecipient();
+        _stake(msg.sender, recipient, amount);
+    }
+
+    /// @inheritdoc IRNBWStaking
+    function stakeForWithSignature(
+        address recipient,
+        uint256 amount,
+        uint256 nonce,
+        uint256 expiry,
+        bytes calldata signature
+    ) external nonReentrant whenNotPaused {
+        if (recipient == address(0)) revert ZeroAddress();
+        if (recipient == address(this) || recipient == DEAD_ADDRESS) revert InvalidRecipient();
+        _validateSignature(
+            recipient,
+            nonce,
+            expiry,
+            keccak256(abi.encode(STAKE_FOR_TYPEHASH, recipient, amount, nonce, expiry)),
+            signature
+        );
         _stake(msg.sender, recipient, amount);
     }
 
