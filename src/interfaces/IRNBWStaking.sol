@@ -213,6 +213,21 @@ interface IRNBWStaking {
     /// @param amount The amount of RNBW to stake
     function stakeFor(address recipient, uint256 amount) external;
 
+    /// @notice Signature-gated stakeFor. Tokens come from msg.sender, shares go to recipient.
+    ///         Nonce prevents replay — each (recipient, nonce) pair can only be used once.
+    /// @param recipient The address that will receive the shares
+    /// @param amount The amount of RNBW to stake
+    /// @param nonce A unique nonce for replay protection (scoped to recipient)
+    /// @param expiry The timestamp after which the signature is invalid
+    /// @param signature The EIP-712 signature from a trusted signer
+    function stakeForWithSignature(
+        address recipient,
+        uint256 amount,
+        uint256 nonce,
+        uint256 expiry,
+        bytes calldata signature
+    ) external;
+
     /// @notice Burn shares to unstake RNBW. An exit fee is deducted and stays in the pool.
     /// @param sharesToBurn The number of shares to burn
     /// @return netAmount The net RNBW transferred to the user after exit fee
