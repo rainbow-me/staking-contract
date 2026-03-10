@@ -11,14 +11,14 @@ Shares-based staking contract for $RNBW on Base. Exit fees stay in the pool and 
 
 | Feature | Details |
 |---------|---------|
-| Staking | `stake()` / `stakeFor()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702). `stakeFor` enables third-party integrations (e.g., liquid staking token). |
+| Staking | `stake()` / `stakeFor()` / `stakeForWithSignature()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702). `stakeFor` and `stakeForWithSignature` enable third-party integrations (e.g., liquid staking token). |
 | Unstaking | `unstake()` -- user calls directly or via relay. Partial unstake toggleable by admin (default: disabled) |
 | Exit fee | Configurable 1%--75%, default 10% -- stays in pool |
 | Cashback | Backend allocates via `allocateCashbackWithSignature()` -- mints shares immediately in one step |
 | Dead shares | First deposit mints 1000 shares to `0xdead` (UniswapV2-style inflation protection) |
 | Cashback reserve | Pre-funded via `fundCashbackReserve()`, tracked separately, protected from emergency withdrawal |
 | Access control | Safe (multisig) for admin ops, 2-step safe transfer, up to 3 trusted EIP-712 signers |
-| Signatures | EIP-712 with expiry + nonce replay protection (cashback only) |
+| Signatures | EIP-712 with expiry + nonce replay protection (cashback and stakeFor) |
 
 ## How It Works
 
@@ -40,6 +40,7 @@ The first staker gets shares at a 1:1 ratio (minus 1000 dead shares for inflatio
 Entry points:
 - `stake(amount)` -- user calls directly or via relay. `msg.sender` is both the token source and share recipient.
 - `stakeFor(recipient, amount)` -- tokens come from `msg.sender`, shares go to `recipient`. Built for third-party integrations like a liquid staking token (xRNBW). Reverts if `recipient` is `address(0)`, `address(this)`, or `DEAD_ADDRESS`.
+- `stakeForWithSignature(recipient, amount, nonce, expiry, signature)` -- same as `stakeFor` but signature-gated. A trusted signer authorizes the stake on behalf of the recipient. Nonce is scoped to the recipient address (shared namespace with cashback nonces). Useful for backend-driven staking where the relayer stakes on behalf of a user with off-chain authorization.
 
 Preview: `previewStake(amount)` returns `sharesToMint` (returns 0 for dust amounts).
 
@@ -384,7 +385,7 @@ All user-facing errors include contextual parameters for off-chain debugging. Ad
 | `InsufficientShares` | `(user, requested, available)` | `_unstake` |
 | `BelowMinimumStake` | `(user, amount, minRequired)` | `_stake` |
 | `ZeroSharesMinted` | `(user, amount)` | `_stake`, `_allocateCashback` |
-| `InvalidRecipient` | -- | `stakeFor` |
+| `InvalidRecipient` | -- | `stakeFor`, `stakeForWithSignature` |
 | `PartialUnstakeDisabled` | `(user, sharesToBurn, totalUserShares)` | `_unstake` |
 
 ### Dead Shares Lifecycle
@@ -460,7 +461,7 @@ make verify-production ADDRESS=0x...  # verify on Basescan
 
 ## EIP-7702 Compatibility
 
-The contract is compatible with EIP-7702 (account abstraction via code delegation). `stake()` and `unstake()` use `msg.sender`, so a 7702-delegated EOA can call them directly through its delegated code. These functions also work with Gelato Turbo Relayer and Relay.link, which use smart account patterns where `msg.sender` is the user's address. `allocateCashbackWithSignature()` works with any `msg.sender` since it validates the trusted backend signer, not the caller.
+The contract is compatible with EIP-7702 (account abstraction via code delegation). `stake()` and `unstake()` use `msg.sender`, so a 7702-delegated EOA can call them directly through its delegated code. These functions also work with Gelato Turbo Relayer and Relay.link, which use smart account patterns where `msg.sender` is the user's address. `allocateCashbackWithSignature()` and `stakeForWithSignature()` work with any `msg.sender` since they validate the trusted backend signer, not the caller.
 
 ## Deployment Assumptions
 
@@ -501,7 +502,7 @@ Deposit: xRNBW takes RNBW from the user, calls `stakeFor(address(xRNBW), amount)
 
 Redeem: user burns xRNBW, contract calls `unstake(sharesToBurn)`, forwards `netAmount` to user.
 
-`stakeFor` and the `netAmount` return value were added specifically for this. `InvalidRecipient` keeps people from accidentally staking to the staking contract itself or `0xdead`.
+`stakeFor`, `stakeForWithSignature`, and the `netAmount` return value were added specifically for this. `stakeForWithSignature` adds backend-controlled staking with EIP-712 replay protection. `InvalidRecipient` keeps people from accidentally staking to the staking contract itself or `0xdead`.
 
 ## Security
 
