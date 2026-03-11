@@ -40,14 +40,14 @@ The first staker gets shares at a 1:1 ratio (minus 1000 dead shares for inflatio
 Entry points:
 - `stake(amount)` -- user calls directly or via relay. `msg.sender` is both the token source and share recipient.
 - `stakeFor(recipient, amount)` -- tokens come from `msg.sender`, shares go to `recipient`. Built for third-party integrations like a liquid staking token (xRNBW). Reverts if `recipient` is `address(0)`, `address(this)`, or `DEAD_ADDRESS`.
-- `stakeForWithSignature(recipient, amount, nonce, expiry, signature)` -- same as `stakeFor` but signature-gated. A trusted signer authorizes the stake on behalf of the recipient. Nonce is scoped to the recipient address (shared namespace with cashback nonces). Useful for backend-driven staking where the relayer stakes on behalf of a user with off-chain authorization.
+- `stakeForWithSignature(funder, recipient, amount, nonce, expiry, signature)` -- signature-gated delegated staking. A trusted signer authorizes the operation; tokens come from `funder` (who must have approved the contract), shares go to `recipient`, and any address can submit the tx (relayer). Three separate roles: signer (authorizes off-chain), funder (provides RNBW), caller/relayer (pays gas). Nonce is scoped to the funder address (independent from cashback nonces, which are scoped to the recipient). **Trust assumption:** a compromised trusted signer can generate valid signatures to pull tokens from any funder who has approved the contract -- same trust model as cashback (compromised signer can drain the cashback reserve). Risk is bounded by the funder's approval amount and the signature expiry window. Funders should approve only the exact amount needed per operation rather than `type(uint256).max`.
 
 Preview: `previewStake(amount)` returns `sharesToMint` (returns 0 for dust amounts).
 
 Steps:
 
 1. Validate -- amount > 0, first-time stakers must meet `minStakeAmount`. `stakeFor` additionally rejects forbidden recipients.
-2. Transfer -- RNBW moves from `msg.sender` (not recipient) to contract via `safeTransferFrom`.
+2. Transfer -- RNBW moves from the token source (`msg.sender` for `stake`/`stakeFor`, `funder` for `stakeForWithSignature`) to contract via `safeTransferFrom`.
 3. Calculate shares -- `sharesToMint = (amount * totalShares) / totalPooledRnbw`. First staker: `sharesToMint = amount - 1000` (dead shares minted to `0xdead`).
 4. Guard -- reverts with `ZeroSharesMinted` if shares round to 0.
 5. Mint -- update `shares[recipient]`, `totalShares`, `totalPooledRnbw`.
