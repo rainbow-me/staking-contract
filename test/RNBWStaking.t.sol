@@ -1689,6 +1689,13 @@ contract RNBWStakingTest is Test {
         staking.defundStakingReserve(0);
     }
 
+    function test_DefundStakingReserveRevertUnauthorized() public {
+        _depositStakingReserve(100 ether);
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.defundStakingReserve(50 ether);
+    }
+
     function test_EmergencyWithdrawProtectsStakingReserve() public {
         _depositStakingReserve(100 ether);
         _depositCashback(50 ether);
