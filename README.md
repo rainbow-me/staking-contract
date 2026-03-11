@@ -135,6 +135,8 @@ Cashback requires `shares[user] > 0`. If a user fully unstakes before their pend
 
 Nonces are arbitrary per `(user, nonce)` -- not sequential. Nonce 9999 can be used before nonce 1. This allows out-of-order processing (retries, parallel workers, batch resubmission). The `expiry` timestamp is the invalidation mechanism -- use short expiries (e.g., 1 hour) so stale signatures die quickly.
 
+**Shared nonce space:** cashback and stakeForWithSignature share the same `usedNonces[address][nonce]` mapping. If the same address is both a cashback recipient and a stakeFor recipient, using nonce N for one operation blocks nonce N for the other. Cross-operation replay is still impossible (different typehashes mean signatures are not interchangeable), but the backend must avoid reusing the same nonce number for the same address across operation types. Simplest approach: use separate nonce ranges per operation (e.g., cashback: 0–999999, stakeFor: 1000000+).
+
 Example:
 
 ```
