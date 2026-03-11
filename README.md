@@ -131,7 +131,7 @@ Steps:
 
 No token transfer happens -- RNBW is already in the contract from `fundCashbackReserve()`. It moves from reserve into `totalPooledRnbw` by minting shares.
 
-Cashback requires `shares[user] > 0`. If a user fully unstakes before their pending cashback is allocated, the call reverts with `NoStakePosition`. The backend must allocate cashback before or alongside unstaking -- never after a full exit. Unused reserve stays available for other users or can be recovered via `emergencyWithdraw`.
+Cashback requires `shares[user] > 0`. If a user fully unstakes before their pending cashback is allocated, the call reverts with `NoStakePosition`. The backend must allocate cashback before or alongside unstaking -- never after a full exit. Unused reserve stays available for other users or can be reclaimed via `defundCashbackReserve()`.
 
 Nonces are arbitrary per `(user, nonce)` -- not sequential. Nonce 9999 can be used before nonce 1. This allows out-of-order processing (retries, parallel workers, batch resubmission). The `expiry` timestamp is the invalidation mechanism -- use short expiries (e.g., 1 hour) so stale signatures die quickly.
 
@@ -375,7 +375,7 @@ Where:
 - 2-step safe transfer: `proposeSafe()` + `acceptSafe()` prevents transfer to wrong address
 - Partial unstake toggle: `allowPartialUnstake` (default: disabled)
 - Preview dust guard: `previewStake()` returns 0 instead of reverting for dust amounts
-- Recipient guards: `stakeFor` rejects `address(0)`, `address(this)`, and `DEAD_ADDRESS` to prevent token locking and dead-share corruption
+- Recipient guards: `stakeFor` and `stakeForWithSignature` reject `address(0)`, `address(this)`, and `DEAD_ADDRESS` to prevent token locking and dead-share corruption
 - Batch size limit: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve check
 - Rich error context: user-facing errors include address and value params for debugging
 
@@ -387,8 +387,8 @@ All user-facing errors include contextual parameters for off-chain debugging. Ad
 |-------|-----------|-----------|
 | `NoStakePosition` | `(user)` | `_unstake`, `_allocateCashback` |
 | `InsufficientShares` | `(user, requested, available)` | `_unstake` |
-| `BelowMinimumStake` | `(user, amount, minRequired)` | `_stake` |
-| `ZeroSharesMinted` | `(user, amount)` | `_stake`, `_allocateCashback` |
+| `BelowMinimumStake` | `(user, amount, minRequired)` | `_stake`, `_stakeFromReserve` |
+| `ZeroSharesMinted` | `(user, amount)` | `_mintShares`, `_allocateCashback` |
 | `InvalidRecipient` | -- | `stakeFor`, `stakeForWithSignature` |
 | `PartialUnstakeDisabled` | `(user, sharesToBurn, totalUserShares)` | `_unstake` |
 
