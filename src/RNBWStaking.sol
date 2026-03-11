@@ -474,49 +474,12 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @param from The address tokens are pulled from (via safeTransferFrom)
     /// @param user The address that receives shares and owns the position
     function _stake(address from, address user, uint256 amount) internal {
-        // 1. Validate amount
         if (amount == 0) revert ZeroAmount();
         if (shares[user] == 0 && amount < minStakeAmount) {
             revert BelowMinimumStake(user, amount, minStakeAmount);
         }
-
-        // 2. Transfer RNBW tokens from sender to contract
         RNBW_TOKEN.safeTransferFrom(from, address(this), amount);
-
-        // 3. Calculate shares to mint based on current exchange rate
-        //    Formula: sharesToMint = (amount * totalShares) / totalPooledRnbw
-        //    First staker: 1:1 ratio (shares = amount)
-        uint256 sharesToMint;
-        if (totalShares == 0) {
-            sharesToMint = amount - MINIMUM_SHARES;
-            shares[DEAD_ADDRESS] += MINIMUM_SHARES;
-            totalShares += MINIMUM_SHARES;
-        } else {
-            sharesToMint = (amount * totalShares) / totalPooledRnbw;
-        }
-
-        // 4. Prevent share inflation attack: if exchange rate is so high that
-        //    the deposit rounds to 0 shares, revert to protect the depositor.
-        //    Without this, the depositor's RNBW would be absorbed into the pool
-        //    with no shares minted, effectively donating to existing stakers.
-        if (sharesToMint == 0) revert ZeroSharesMinted(user, amount);
-
-        // 5. Update user's share balance and global totals
-        shares[user] += sharesToMint;
-        totalShares += sharesToMint;
-        totalPooledRnbw += amount;
-
-        // 6. Update user metadata
-        UserMeta storage meta = userMeta[user];
-        if (meta.stakingStartTime == 0) {
-            meta.stakingStartTime = block.timestamp;
-        }
-        meta.lastUpdateTime = block.timestamp;
-        meta.totalRnbwStaked += amount;
-
-        // 7. Emit events
-        emit Staked(user, amount, sharesToMint, shares[user]);
-        emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
+        _mintShares(user, amount);
     }
 
     /// @dev Core unstaking logic
@@ -599,15 +562,21 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
     }
 
-    /// @dev Stakes from the pre-funded staking reserve. Like _stake but no token transfer —
-    ///      RNBW is already in the contract from fundStakingReserve(). Creates new positions.
+    /// @dev Stakes from the pre-funded staking reserve — no token transfer,
+    ///      RNBW is already in the contract from fundStakingReserve().
     function _stakeFromReserve(address user, uint256 amount) internal {
         if (amount == 0) revert ZeroAmount();
         if (shares[user] == 0 && amount < minStakeAmount) {
             revert BelowMinimumStake(user, amount, minStakeAmount);
         }
         if (amount > stakingReserve) revert InsufficientStakingBalance();
+        stakingReserve -= amount;
+        _mintShares(user, amount);
+    }
 
+    /// @dev Shared share-minting logic used by _stake and _stakeFromReserve.
+    ///      Calculates shares, updates pool totals, sets metadata, emits events.
+    function _mintShares(address user, uint256 amount) internal {
         uint256 sharesToMint;
         if (totalShares == 0) {
             sharesToMint = amount - MINIMUM_SHARES;
@@ -622,7 +591,6 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         shares[user] += sharesToMint;
         totalShares += sharesToMint;
         totalPooledRnbw += amount;
-        stakingReserve -= amount;
 
         UserMeta storage meta = userMeta[user];
         if (meta.stakingStartTime == 0) {
