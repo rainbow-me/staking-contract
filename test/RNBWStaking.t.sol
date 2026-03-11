@@ -1600,7 +1600,7 @@ contract RNBWStakingTest is Test {
         staking.stakeForWithSignature(bob, amount, 0, block.timestamp + 1 hours, sig);
     }
 
-    function test_StakeForWithSignatureNonceIndependentFromCashback() public {
+    function test_StakeForWithSignatureSharedNonceDifferentUsers() public {
         uint256 amount = 100 ether;
         uint256 nonce = 99;
         uint256 expiry = block.timestamp + 1 hours;
@@ -1619,6 +1619,27 @@ contract RNBWStakingTest is Test {
         staking.stakeForWithSignature(bob, 10 ether, nonce, expiry, stakeForSig);
 
         assertGt(staking.shares(bob), 0);
+    }
+
+    function test_StakeForWithSignatureSharedNonceSameUserCollides() public {
+        uint256 amount = 100 ether;
+        uint256 nonce = 5;
+        uint256 expiry = block.timestamp + 1 hours;
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), amount);
+        staking.stake(amount);
+        vm.stopPrank();
+
+        _depositCashback(50 ether);
+        bytes memory cashbackSig = _signAllocateCashback(alice, 10 ether, nonce, expiry);
+        staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, cashbackSig);
+
+        _depositStakingReserve(10 ether);
+        bytes memory stakeForSig = _signStakeFor(alice, 10 ether, nonce, expiry);
+
+        vm.expectRevert(IRNBWStaking.NonceAlreadyUsed.selector);
+        staking.stakeForWithSignature(alice, 10 ether, nonce, expiry, stakeForSig);
     }
 
     function test_FundStakingReserve() public {
