@@ -46,7 +46,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         keccak256("AllocateCashback(address user,uint256 rnbwCashback,uint256 nonce,uint256 expiry)");
 
     bytes32 public constant STAKE_FOR_TYPEHASH =
-        keccak256("StakeFor(address funder,address recipient,uint256 amount,uint256 nonce,uint256 expiry)");
+        keccak256("StakeFor(address recipient,uint256 amount,uint256 nonce,uint256 expiry)");
 
     /*//////////////////////////////////////////////////////////////
                                 STORAGE
@@ -67,6 +67,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public totalPooledRnbw;
     uint256 public cashbackReserve;
     uint256 public totalCashbackAllocated;
+    uint256 public stakingReserve;
 
     // --- Users ---
     mapping(address => UserMeta) public userMeta;
@@ -131,24 +132,22 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function stakeForWithSignature(
-        address funder,
         address recipient,
         uint256 amount,
         uint256 nonce,
         uint256 expiry,
         bytes calldata signature
     ) external nonReentrant whenNotPaused {
-        if (funder == address(0)) revert ZeroAddress();
         if (recipient == address(0)) revert ZeroAddress();
         if (recipient == address(this) || recipient == DEAD_ADDRESS) revert InvalidRecipient();
         _validateSignature(
-            funder,
+            recipient,
             nonce,
             expiry,
-            keccak256(abi.encode(STAKE_FOR_TYPEHASH, funder, recipient, amount, nonce, expiry)),
+            keccak256(abi.encode(STAKE_FOR_TYPEHASH, recipient, amount, nonce, expiry)),
             signature
         );
-        _stake(funder, recipient, amount);
+        _stakeFromReserve(recipient, amount);
     }
 
     /// @inheritdoc IRNBWStaking
@@ -329,7 +328,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (amount == 0) revert ZeroAmount();
         if (token == address(RNBW_TOKEN)) {
             uint256 balance = RNBW_TOKEN.balanceOf(address(this));
-            uint256 reserved = totalPooledRnbw + cashbackReserve;
+            uint256 reserved = totalPooledRnbw + cashbackReserve + stakingReserve;
             uint256 excess = balance > reserved ? balance - reserved : 0;
             if (amount > excess) revert InsufficientExcess();
         }
@@ -378,6 +377,23 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         RNBW_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
         cashbackReserve += amount;
         emit CashbackReserveFunded(msg.sender, amount, cashbackReserve);
+    }
+
+    /// @inheritdoc IRNBWStaking
+    function fundStakingReserve(uint256 amount) external onlySafe {
+        if (amount == 0) revert ZeroAmount();
+        RNBW_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
+        stakingReserve += amount;
+        emit StakingReserveFunded(msg.sender, amount, stakingReserve);
+    }
+
+    /// @inheritdoc IRNBWStaking
+    function defundStakingReserve(uint256 amount) external onlySafe {
+        if (amount == 0) revert ZeroAmount();
+        if (amount > stakingReserve) revert InsufficientStakingBalance();
+        stakingReserve -= amount;
+        RNBW_TOKEN.safeTransfer(safe, amount);
+        emit StakingReserveDefunded(safe, amount, stakingReserve);
     }
 
     /// @inheritdoc IRNBWStaking
@@ -580,6 +596,42 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
         // 10. Emit events
         emit Unstaked(user, sharesToBurn, rnbwValue, exitFee, netAmount);
+        emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
+    }
+
+    /// @dev Stakes from the pre-funded staking reserve. Like _stake but no token transfer —
+    ///      RNBW is already in the contract from fundStakingReserve(). Creates new positions.
+    function _stakeFromReserve(address user, uint256 amount) internal {
+        if (amount == 0) revert ZeroAmount();
+        if (shares[user] == 0 && amount < minStakeAmount) {
+            revert BelowMinimumStake(user, amount, minStakeAmount);
+        }
+        if (amount > stakingReserve) revert InsufficientStakingBalance();
+
+        uint256 sharesToMint;
+        if (totalShares == 0) {
+            sharesToMint = amount - MINIMUM_SHARES;
+            shares[DEAD_ADDRESS] += MINIMUM_SHARES;
+            totalShares += MINIMUM_SHARES;
+        } else {
+            sharesToMint = (amount * totalShares) / totalPooledRnbw;
+        }
+
+        if (sharesToMint == 0) revert ZeroSharesMinted(user, amount);
+
+        shares[user] += sharesToMint;
+        totalShares += sharesToMint;
+        totalPooledRnbw += amount;
+        stakingReserve -= amount;
+
+        UserMeta storage meta = userMeta[user];
+        if (meta.stakingStartTime == 0) {
+            meta.stakingStartTime = block.timestamp;
+        }
+        meta.lastUpdateTime = block.timestamp;
+        meta.totalRnbwStaked += amount;
+
+        emit Staked(user, amount, sharesToMint, shares[user]);
         emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
     }
 

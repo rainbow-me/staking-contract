@@ -45,16 +45,23 @@ contract RNBWStakingTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _signStakeFor(address funder, address recipient, uint256 amount, uint256 nonce, uint256 expiry)
+    function _signStakeFor(address recipient, uint256 amount, uint256 nonce, uint256 expiry)
         internal
         view
         returns (bytes memory)
     {
-        bytes32 structHash =
-            keccak256(abi.encode(staking.STAKE_FOR_TYPEHASH(), funder, recipient, amount, nonce, expiry));
+        bytes32 structHash = keccak256(abi.encode(staking.STAKE_FOR_TYPEHASH(), recipient, amount, nonce, expiry));
         bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
         return abi.encodePacked(r, s, v);
+    }
+
+    function _depositStakingReserve(uint256 amount) internal {
+        rnbwToken.mint(admin, amount);
+        vm.startPrank(admin);
+        rnbwToken.approve(address(staking), amount);
+        staking.fundStakingReserve(amount);
+        vm.stopPrank();
     }
 
     function _depositCashback(uint256 amount) internal {
@@ -1477,49 +1484,40 @@ contract RNBWStakingTest is Test {
         uint256 amount = 100 ether;
         uint256 nonce = 42;
         uint256 expiry = block.timestamp + 1 hours;
-        bytes memory sig = _signStakeFor(alice, bob, amount, nonce, expiry);
 
-        vm.startPrank(alice);
-        rnbwToken.approve(address(staking), amount);
-        staking.stakeForWithSignature(alice, bob, amount, nonce, expiry, sig);
-        vm.stopPrank();
+        _depositStakingReserve(amount);
+        bytes memory sig = _signStakeFor(bob, amount, nonce, expiry);
+
+        staking.stakeForWithSignature(bob, amount, nonce, expiry, sig);
 
         uint256 deadShares = staking.MINIMUM_SHARES();
         assertEq(staking.shares(bob), amount - deadShares);
-        assertEq(staking.shares(alice), 0);
-        assertEq(rnbwToken.balanceOf(alice), INITIAL_BALANCE - amount);
         assertEq(staking.totalPooledRnbw(), amount);
+        assertEq(staking.stakingReserve(), 0);
     }
 
-    function test_StakeForWithSignatureSeparateFunderAndCaller() public {
-        address treasury = makeAddr("treasury");
+    function test_StakeForWithSignatureRelayerSubmits() public {
         address relayer = makeAddr("relayer");
         uint256 amount = 100 ether;
         uint256 expiry = block.timestamp + 1 hours;
 
-        rnbwToken.mint(treasury, amount);
-        vm.prank(treasury);
-        rnbwToken.approve(address(staking), amount);
-
-        bytes memory sig = _signStakeFor(treasury, bob, amount, 0, expiry);
+        _depositStakingReserve(amount);
+        bytes memory sig = _signStakeFor(bob, amount, 0, expiry);
 
         vm.prank(relayer);
-        staking.stakeForWithSignature(treasury, bob, amount, 0, expiry, sig);
+        staking.stakeForWithSignature(bob, amount, 0, expiry, sig);
 
         uint256 deadShares = staking.MINIMUM_SHARES();
         assertEq(staking.shares(bob), amount - deadShares);
-        assertEq(rnbwToken.balanceOf(treasury), 0);
         assertEq(rnbwToken.balanceOf(relayer), 0);
     }
 
     function test_StakeForWithSignatureMetadata() public {
         uint256 amount = 100 ether;
-        bytes memory sig = _signStakeFor(alice, bob, amount, 0, block.timestamp + 1 hours);
+        _depositStakingReserve(amount);
+        bytes memory sig = _signStakeFor(bob, amount, 0, block.timestamp + 1 hours);
 
-        vm.startPrank(alice);
-        rnbwToken.approve(address(staking), amount);
-        staking.stakeForWithSignature(alice, bob, amount, 0, block.timestamp + 1 hours, sig);
-        vm.stopPrank();
+        staking.stakeForWithSignature(bob, amount, 0, block.timestamp + 1 hours, sig);
 
         (,,, uint256 stakingStartTime,, uint256 totalStaked,,) = staking.getPosition(bob);
         assertEq(stakingStartTime, block.timestamp);
@@ -1529,96 +1527,80 @@ contract RNBWStakingTest is Test {
     function test_StakeForWithSignatureRevertExpired() public {
         uint256 amount = 100 ether;
         uint256 expiry = block.timestamp + 1 hours;
-        bytes memory sig = _signStakeFor(alice, bob, amount, 0, expiry);
+        _depositStakingReserve(amount);
+        bytes memory sig = _signStakeFor(bob, amount, 0, expiry);
 
         vm.warp(expiry + 1);
 
-        vm.startPrank(alice);
-        rnbwToken.approve(address(staking), amount);
         vm.expectRevert(IRNBWStaking.SignatureExpired.selector);
-        staking.stakeForWithSignature(alice, bob, amount, 0, expiry, sig);
-        vm.stopPrank();
+        staking.stakeForWithSignature(bob, amount, 0, expiry, sig);
     }
 
     function test_StakeForWithSignatureRevertReplayNonce() public {
         uint256 amount = 100 ether;
         uint256 expiry = block.timestamp + 1 hours;
-        bytes memory sig = _signStakeFor(alice, bob, amount, 0, expiry);
+        _depositStakingReserve(amount * 2);
+        bytes memory sig = _signStakeFor(bob, amount, 0, expiry);
 
-        rnbwToken.mint(alice, amount);
-
-        vm.startPrank(alice);
-        rnbwToken.approve(address(staking), amount * 2);
-        staking.stakeForWithSignature(alice, bob, amount, 0, expiry, sig);
+        staking.stakeForWithSignature(bob, amount, 0, expiry, sig);
 
         vm.expectRevert(IRNBWStaking.NonceAlreadyUsed.selector);
-        staking.stakeForWithSignature(alice, bob, amount, 0, expiry, sig);
-        vm.stopPrank();
+        staking.stakeForWithSignature(bob, amount, 0, expiry, sig);
     }
 
     function test_StakeForWithSignatureRevertInvalidSigner() public {
         uint256 amount = 100 ether;
         uint256 expiry = block.timestamp + 1 hours;
+        _depositStakingReserve(amount);
 
         uint256 fakePk = 0xBAD;
-        bytes32 structHash = keccak256(abi.encode(staking.STAKE_FOR_TYPEHASH(), alice, bob, amount, uint256(0), expiry));
+        bytes32 structHash = keccak256(abi.encode(staking.STAKE_FOR_TYPEHASH(), bob, amount, uint256(0), expiry));
         bytes32 digest = MessageHashUtils.toTypedDataHash(staking.domainSeparator(), structHash);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(fakePk, digest);
         bytes memory sig = abi.encodePacked(r, s, v);
 
-        vm.startPrank(alice);
-        rnbwToken.approve(address(staking), amount);
         vm.expectRevert(IRNBWStaking.InvalidSignature.selector);
-        staking.stakeForWithSignature(alice, bob, amount, 0, expiry, sig);
-        vm.stopPrank();
-    }
-
-    function test_StakeForWithSignatureRevertZeroFunder() public {
-        uint256 amount = 100 ether;
-        bytes memory sig = _signStakeFor(address(0), bob, amount, 0, block.timestamp + 1 hours);
-
-        vm.startPrank(alice);
-        rnbwToken.approve(address(staking), amount);
-        vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
-        staking.stakeForWithSignature(address(0), bob, amount, 0, block.timestamp + 1 hours, sig);
-        vm.stopPrank();
+        staking.stakeForWithSignature(bob, amount, 0, expiry, sig);
     }
 
     function test_StakeForWithSignatureRevertZeroRecipient() public {
         uint256 amount = 100 ether;
-        bytes memory sig = _signStakeFor(alice, address(0), amount, 0, block.timestamp + 1 hours);
+        _depositStakingReserve(amount);
+        bytes memory sig = _signStakeFor(address(0), amount, 0, block.timestamp + 1 hours);
 
-        vm.startPrank(alice);
-        rnbwToken.approve(address(staking), amount);
         vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
-        staking.stakeForWithSignature(alice, address(0), amount, 0, block.timestamp + 1 hours, sig);
-        vm.stopPrank();
+        staking.stakeForWithSignature(address(0), amount, 0, block.timestamp + 1 hours, sig);
     }
 
     function test_StakeForWithSignatureRevertDeadAddress() public {
         address dead = staking.DEAD_ADDRESS();
         uint256 amount = 100 ether;
-        bytes memory sig = _signStakeFor(alice, dead, amount, 0, block.timestamp + 1 hours);
+        _depositStakingReserve(amount);
+        bytes memory sig = _signStakeFor(dead, amount, 0, block.timestamp + 1 hours);
 
-        vm.startPrank(alice);
-        rnbwToken.approve(address(staking), amount);
         vm.expectRevert(IRNBWStaking.InvalidRecipient.selector);
-        staking.stakeForWithSignature(alice, dead, amount, 0, block.timestamp + 1 hours, sig);
-        vm.stopPrank();
+        staking.stakeForWithSignature(dead, amount, 0, block.timestamp + 1 hours, sig);
     }
 
     function test_StakeForWithSignatureRevertContractRecipient() public {
         uint256 amount = 100 ether;
-        bytes memory sig = _signStakeFor(alice, address(staking), amount, 0, block.timestamp + 1 hours);
+        _depositStakingReserve(amount);
+        bytes memory sig = _signStakeFor(address(staking), amount, 0, block.timestamp + 1 hours);
 
-        vm.startPrank(alice);
-        rnbwToken.approve(address(staking), amount);
         vm.expectRevert(IRNBWStaking.InvalidRecipient.selector);
-        staking.stakeForWithSignature(alice, address(staking), amount, 0, block.timestamp + 1 hours, sig);
-        vm.stopPrank();
+        staking.stakeForWithSignature(address(staking), amount, 0, block.timestamp + 1 hours, sig);
     }
 
-    function test_StakeForWithSignatureNonceScopedToFunder() public {
+    function test_StakeForWithSignatureRevertInsufficientReserve() public {
+        uint256 amount = 100 ether;
+        _depositStakingReserve(50 ether);
+        bytes memory sig = _signStakeFor(bob, amount, 0, block.timestamp + 1 hours);
+
+        vm.expectRevert(IRNBWStaking.InsufficientStakingBalance.selector);
+        staking.stakeForWithSignature(bob, amount, 0, block.timestamp + 1 hours, sig);
+    }
+
+    function test_StakeForWithSignatureNonceIndependentFromCashback() public {
         uint256 amount = 100 ether;
         uint256 nonce = 99;
         uint256 expiry = block.timestamp + 1 hours;
@@ -1632,31 +1614,71 @@ contract RNBWStakingTest is Test {
         bytes memory cashbackSig = _signAllocateCashback(alice, 10 ether, nonce, expiry);
         staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, cashbackSig);
 
-        bytes memory stakeForSig = _signStakeFor(bob, alice, 10 ether, nonce, expiry);
-        rnbwToken.mint(bob, 10 ether);
-        vm.startPrank(bob);
-        rnbwToken.approve(address(staking), 10 ether);
-        staking.stakeForWithSignature(bob, alice, 10 ether, nonce, expiry, stakeForSig);
-        vm.stopPrank();
+        _depositStakingReserve(10 ether);
+        bytes memory stakeForSig = _signStakeFor(bob, 10 ether, nonce, expiry);
+        staking.stakeForWithSignature(bob, 10 ether, nonce, expiry, stakeForSig);
 
-        assertGt(staking.shares(alice), 0);
+        assertGt(staking.shares(bob), 0);
     }
 
-    function test_StakeForWithSignatureRevertReplayNonceSameFunder() public {
-        uint256 amount = 100 ether;
-        uint256 nonce = 1;
-        uint256 expiry = block.timestamp + 1 hours;
+    function test_FundStakingReserve() public {
+        uint256 amount = 500 ether;
+        rnbwToken.mint(admin, amount);
+        vm.startPrank(admin);
+        rnbwToken.approve(address(staking), amount);
+        staking.fundStakingReserve(amount);
+        vm.stopPrank();
 
-        address treasury = makeAddr("treasury");
-        rnbwToken.mint(treasury, amount * 2);
-        vm.prank(treasury);
-        rnbwToken.approve(address(staking), amount * 2);
+        assertEq(staking.stakingReserve(), amount);
+    }
 
-        bytes memory sig1 = _signStakeFor(treasury, alice, amount, nonce, expiry);
-        staking.stakeForWithSignature(treasury, alice, amount, nonce, expiry, sig1);
+    function test_FundStakingReserveRevertZeroAmount() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
+        staking.fundStakingReserve(0);
+    }
 
-        bytes memory sig2 = _signStakeFor(treasury, bob, amount, nonce, expiry);
-        vm.expectRevert(IRNBWStaking.NonceAlreadyUsed.selector);
-        staking.stakeForWithSignature(treasury, bob, amount, nonce, expiry, sig2);
+    function test_FundStakingReserveRevertUnauthorized() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.fundStakingReserve(100 ether);
+    }
+
+    function test_DefundStakingReserve() public {
+        _depositStakingReserve(500 ether);
+
+        vm.prank(admin);
+        staking.defundStakingReserve(200 ether);
+
+        assertEq(staking.stakingReserve(), 300 ether);
+        assertEq(rnbwToken.balanceOf(admin), 200 ether);
+    }
+
+    function test_DefundStakingReserveRevertInsufficientBalance() public {
+        _depositStakingReserve(100 ether);
+
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.InsufficientStakingBalance.selector);
+        staking.defundStakingReserve(200 ether);
+    }
+
+    function test_DefundStakingReserveRevertZeroAmount() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
+        staking.defundStakingReserve(0);
+    }
+
+    function test_EmergencyWithdrawProtectsStakingReserve() public {
+        _depositStakingReserve(100 ether);
+        _depositCashback(50 ether);
+
+        rnbwToken.mint(address(staking), 25 ether);
+
+        vm.prank(admin);
+        staking.emergencyWithdraw(address(rnbwToken), 25 ether);
+
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.InsufficientExcess.selector);
+        staking.emergencyWithdraw(address(rnbwToken), 1);
     }
 }

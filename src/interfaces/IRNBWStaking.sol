@@ -85,6 +85,18 @@ interface IRNBWStaking {
     /// @param newReserve The total cashback reserve after defunding
     event CashbackReserveDefunded(address indexed to, uint256 amount, uint256 newReserve);
 
+    /// @notice Emitted when the admin deposits RNBW to fund the staking reserve
+    /// @param from The depositor's address (must be safe)
+    /// @param amount The amount of RNBW deposited
+    /// @param newReserve The total staking reserve after funding
+    event StakingReserveFunded(address indexed from, uint256 amount, uint256 newReserve);
+
+    /// @notice Emitted when the admin reclaims RNBW from the staking reserve
+    /// @param to The recipient's address (safe)
+    /// @param amount The amount of RNBW reclaimed
+    /// @param newReserve The total staking reserve after defunding
+    event StakingReserveDefunded(address indexed to, uint256 amount, uint256 newReserve);
+
     /// @notice Emitted when a new safe address is proposed (step 1 of 2-step transfer)
     /// @param currentSafe The current safe address that proposed the change
     /// @param proposedSafe The proposed new safe address
@@ -170,6 +182,9 @@ interface IRNBWStaking {
     /// @notice Thrown when cashback allocation or reserve defunding exceeds the available cashbackReserve
     error InsufficientCashbackBalance();
 
+    /// @notice Thrown when stakeForWithSignature or defundStakingReserve exceeds the available stakingReserve
+    error InsufficientStakingBalance();
+
     /// @notice Thrown when emergencyWithdraw tries to withdraw more RNBW than excess
     error InsufficientExcess();
 
@@ -213,16 +228,15 @@ interface IRNBWStaking {
     /// @param amount The amount of RNBW to stake
     function stakeFor(address recipient, uint256 amount) external;
 
-    /// @notice Signature-gated stakeFor. Tokens come from funder, shares go to recipient.
-    ///         The funder must have approved the contract. Nonce prevents replay — each (funder, nonce) pair can only be used once.
-    /// @param funder The address that provides the RNBW tokens (must have approved the contract)
+    /// @notice Signature-gated staking from the pre-funded staking reserve.
+    ///         RNBW comes from stakingReserve (funded via fundStakingReserve), shares go to recipient.
+    ///         Any address can call — authorization is via the trusted signer's signature.
     /// @param recipient The address that will receive the shares
-    /// @param amount The amount of RNBW to stake
-    /// @param nonce A unique nonce for replay protection (scoped to funder)
+    /// @param amount The amount of RNBW to stake from the reserve
+    /// @param nonce A unique nonce for replay protection (scoped to recipient)
     /// @param expiry The timestamp after which the signature is invalid
     /// @param signature The EIP-712 signature from a trusted signer
     function stakeForWithSignature(
-        address funder,
         address recipient,
         uint256 amount,
         uint256 nonce,
@@ -358,7 +372,7 @@ interface IRNBWStaking {
     function unpause() external;
 
     /// @notice Withdraw tokens from the contract. For RNBW, only excess above
-    ///         totalPooledRnbw + cashbackReserve can be withdrawn.
+    ///         totalPooledRnbw + cashbackReserve + stakingReserve can be withdrawn.
     /// @param token The token address to withdraw
     /// @param amount The amount to withdraw
     function emergencyWithdraw(address token, uint256 amount) external;
@@ -374,6 +388,14 @@ interface IRNBWStaking {
     /// @notice Deposit RNBW to fund the cashback reserve
     /// @param amount The amount of RNBW to deposit
     function fundCashbackReserve(uint256 amount) external;
+
+    /// @notice Deposit RNBW to fund the staking reserve (used by stakeForWithSignature)
+    /// @param amount The amount of RNBW to deposit
+    function fundStakingReserve(uint256 amount) external;
+
+    /// @notice Reclaim RNBW from the staking reserve (returns to safe)
+    /// @param amount The amount of RNBW to reclaim
+    function defundStakingReserve(uint256 amount) external;
 
     /// @notice Reclaim RNBW from the cashback reserve (returns to safe)
     /// @param amount The amount of RNBW to reclaim

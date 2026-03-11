@@ -11,12 +11,13 @@ Shares-based staking contract for $RNBW on Base. Exit fees stay in the pool and 
 
 | Feature | Details |
 |---------|---------|
-| Staking | `stake()` / `stakeFor()` / `stakeForWithSignature()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702). `stakeFor` and `stakeForWithSignature` enable third-party integrations (e.g., liquid staking token). |
+| Staking | `stake()` / `stakeFor()` / `stakeForWithSignature()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702). `stakeFor` enables third-party integrations (e.g., liquid staking token). `stakeForWithSignature` stakes from a pre-funded reserve with EIP-712 authorization. |
 | Unstaking | `unstake()` -- user calls directly or via relay. Partial unstake toggleable by admin (default: disabled) |
 | Exit fee | Configurable 1%--75%, default 10% -- stays in pool |
 | Cashback | Backend allocates via `allocateCashbackWithSignature()` -- mints shares immediately in one step |
 | Dead shares | First deposit mints 1000 shares to `0xdead` (UniswapV2-style inflation protection) |
 | Cashback reserve | Pre-funded via `fundCashbackReserve()`, tracked separately, protected from emergency withdrawal |
+| Staking reserve | Pre-funded via `fundStakingReserve()`, used by `stakeForWithSignature`, protected from emergency withdrawal |
 | Access control | Safe (multisig) for admin ops, 2-step safe transfer, up to 3 trusted EIP-712 signers |
 | Signatures | EIP-712 with expiry + nonce replay protection (cashback and stakeFor) |
 
@@ -40,14 +41,14 @@ The first staker gets shares at a 1:1 ratio (minus 1000 dead shares for inflatio
 Entry points:
 - `stake(amount)` -- user calls directly or via relay. `msg.sender` is both the token source and share recipient.
 - `stakeFor(recipient, amount)` -- tokens come from `msg.sender`, shares go to `recipient`. Built for third-party integrations like a liquid staking token (xRNBW). Reverts if `recipient` is `address(0)`, `address(this)`, or `DEAD_ADDRESS`.
-- `stakeForWithSignature(funder, recipient, amount, nonce, expiry, signature)` -- signature-gated delegated staking. A trusted signer authorizes the operation; tokens come from `funder` (who must have approved the contract), shares go to `recipient`, and any address can submit the tx (relayer). Three separate roles: signer (authorizes off-chain), funder (provides RNBW), caller/relayer (pays gas). Nonce is scoped to the funder address (independent from cashback nonces, which are scoped to the recipient). **Trust assumption:** a compromised trusted signer can generate valid signatures to pull tokens from any funder who has approved the contract -- same trust model as cashback (compromised signer can drain the cashback reserve). Risk is bounded by the funder's approval amount and the signature expiry window. Funders should approve only the exact amount needed per operation rather than `type(uint256).max`.
+- `stakeForWithSignature(recipient, amount, nonce, expiry, signature)` -- signature-gated staking from the pre-funded staking reserve. A trusted signer authorizes the operation off-chain; RNBW comes from `stakingReserve` (funded via `fundStakingReserve()`), shares go to `recipient`, and any address can submit the tx (relayer). Two roles: signer (authorizes off-chain), caller/relayer (pays gas). Nonce is scoped to the recipient address. Same trust model as cashback -- compromised signer can drain the staking reserve by generating valid signatures. Risk is bounded by the reserve balance and the signature expiry window.
 
 Preview: `previewStake(amount)` returns `sharesToMint` (returns 0 for dust amounts).
 
 Steps:
 
 1. Validate -- amount > 0, first-time stakers must meet `minStakeAmount`. `stakeFor` additionally rejects forbidden recipients.
-2. Transfer -- RNBW moves from the token source (`msg.sender` for `stake`/`stakeFor`, `funder` for `stakeForWithSignature`) to contract via `safeTransferFrom`.
+2. Transfer -- RNBW moves from `msg.sender` to contract via `safeTransferFrom` (`stake`/`stakeFor`), or is deducted from the pre-funded `stakingReserve` (`stakeForWithSignature`).
 3. Calculate shares -- `sharesToMint = (amount * totalShares) / totalPooledRnbw`. First staker: `sharesToMint = amount - 1000` (dead shares minted to `0xdead`).
 4. Guard -- reverts with `ZeroSharesMinted` if shares round to 0.
 5. Mint -- update `shares[recipient]`, `totalShares`, `totalPooledRnbw`.
@@ -362,7 +363,8 @@ Where:
 
 - Dead shares: 1000 shares minted to `0xdead` on first deposit (prevents share inflation / first depositor attack)
 - Cashback reserve: tracked separately from staking pool, protected from `emergencyWithdraw`
-- Emergency withdraw: for RNBW, only excess above `totalPooledRnbw + cashbackReserve` can be withdrawn -- the pool and reserve are untouchable. Non-RNBW tokens have no restriction (rescue for accidental sends).
+- Staking reserve: tracked separately, protected from `emergencyWithdraw`, reclaimable via `defundStakingReserve()`
+- Emergency withdraw: for RNBW, only excess above `totalPooledRnbw + cashbackReserve + stakingReserve` can be withdrawn -- the pool and both reserves are untouchable. Non-RNBW tokens have no restriction (rescue for accidental sends).
 - Min stake floor: `minStakeAmount` cannot be set below 1 RNBW
 - Inflation guard: `ZeroSharesMinted` revert protects depositors from rounding attacks
 - Residual sweep: when only dead shares remain, orphaned exit fees are swept to safe and pool is reset
@@ -483,7 +485,7 @@ Backend responsibility: filter amounts that would mint 0 shares at current rate,
 
 ### No admin access to pool or reserve
 
-There is no function that lets the admin withdraw from `totalPooledRnbw` or `cashbackReserve`. Pool RNBW is only withdrawable by stakers burning shares. Cashback reserve is only consumable via signed allocations. `emergencyWithdraw` is restricted to excess RNBW above both. To wind down the protocol: pause, let users unstake, residual sweeps to safe when pool empties.
+There is no function that lets the admin withdraw from `totalPooledRnbw`. Pool RNBW is only withdrawable by stakers burning shares. Cashback reserve is consumable via signed allocations or reclaimable via `defundCashbackReserve()`. Staking reserve is consumable via `stakeForWithSignature` or reclaimable via `defundStakingReserve()`. `emergencyWithdraw` is restricted to excess RNBW above all three (`totalPooledRnbw + cashbackReserve + stakingReserve`). To wind down the protocol: stop new stakes (disable frontend / revoke signers), let existing users unstake normally, residual sweeps to safe when pool empties. Note: `pause()` is an emergency brake that freezes everything including unstaking -- it is not a wind-down mechanism.
 
 ## Future: Liquid Staking Token (xRNBW)
 
@@ -502,7 +504,7 @@ Deposit: xRNBW takes RNBW from the user, calls `stakeFor(address(xRNBW), amount)
 
 Redeem: user burns xRNBW, contract calls `unstake(sharesToBurn)`, forwards `netAmount` to user.
 
-`stakeFor`, `stakeForWithSignature`, and the `netAmount` return value were added specifically for this. `stakeForWithSignature` adds backend-controlled staking with EIP-712 replay protection. `InvalidRecipient` keeps people from accidentally staking to the staking contract itself or `0xdead`.
+`stakeFor`, `stakeForWithSignature`, and the `netAmount` return value were added specifically for this. `stakeForWithSignature` adds backend-controlled staking from the pre-funded staking reserve with EIP-712 replay protection. `InvalidRecipient` keeps people from accidentally staking to the staking contract itself or `0xdead`.
 
 ## Security
 
