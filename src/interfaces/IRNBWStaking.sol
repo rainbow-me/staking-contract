@@ -9,7 +9,7 @@ interface IRNBWStaking {
     /// @param lastUpdateTime Timestamp of the last stake, unstake, or cashback action
     /// @param stakingStartTime Timestamp of the user's first stake (reset to 0 on full unstake)
     /// @param totalCashbackReceived Lifetime cumulative cashback RNBW allocated to this user (never resets)
-    /// @param totalRnbwStaked Lifetime cumulative RNBW deposited via stake() (never resets)
+    /// @param totalRnbwStaked Lifetime cumulative RNBW staked via any path (never resets)
     /// @param totalRnbwUnstaked Lifetime cumulative net RNBW received from unstake(), after exit fee (never resets)
     /// @param totalExitFeePaid Lifetime cumulative exit fees paid by this user (never resets)
     struct UserMeta {
@@ -84,6 +84,18 @@ interface IRNBWStaking {
     /// @param amount The amount of RNBW reclaimed
     /// @param newReserve The total cashback reserve after defunding
     event CashbackReserveDefunded(address indexed to, uint256 amount, uint256 newReserve);
+
+    /// @notice Emitted when the admin deposits RNBW to fund the staking reserve
+    /// @param from The depositor's address (must be safe)
+    /// @param amount The amount of RNBW deposited
+    /// @param newReserve The total staking reserve after funding
+    event StakingReserveFunded(address indexed from, uint256 amount, uint256 newReserve);
+
+    /// @notice Emitted when the admin reclaims RNBW from the staking reserve
+    /// @param to The recipient's address (safe)
+    /// @param amount The amount of RNBW reclaimed
+    /// @param newReserve The total staking reserve after defunding
+    event StakingReserveDefunded(address indexed to, uint256 amount, uint256 newReserve);
 
     /// @notice Emitted when a new safe address is proposed (step 1 of 2-step transfer)
     /// @param currentSafe The current safe address that proposed the change
@@ -170,6 +182,9 @@ interface IRNBWStaking {
     /// @notice Thrown when cashback allocation or reserve defunding exceeds the available cashbackReserve
     error InsufficientCashbackBalance();
 
+    /// @notice Thrown when stakeForWithSignature or defundStakingReserve exceeds the available stakingReserve
+    error InsufficientStakingBalance();
+
     /// @notice Thrown when emergencyWithdraw tries to withdraw more RNBW than excess
     error InsufficientExcess();
 
@@ -212,6 +227,22 @@ interface IRNBWStaking {
     /// @param recipient The address that will receive the shares
     /// @param amount The amount of RNBW to stake
     function stakeFor(address recipient, uint256 amount) external;
+
+    /// @notice Signature-gated staking from the pre-funded staking reserve.
+    ///         RNBW comes from stakingReserve (funded via fundStakingReserve), shares go to recipient.
+    ///         Any address can call — authorization is via the trusted signer's signature.
+    /// @param recipient The address that will receive the shares
+    /// @param amount The amount of RNBW to stake from the reserve
+    /// @param nonce A unique nonce for replay protection (scoped to recipient)
+    /// @param expiry The timestamp after which the signature is invalid
+    /// @param signature The EIP-712 signature from a trusted signer
+    function stakeForWithSignature(
+        address recipient,
+        uint256 amount,
+        uint256 nonce,
+        uint256 expiry,
+        bytes calldata signature
+    ) external;
 
     /// @notice Burn shares to unstake RNBW. An exit fee is deducted and stays in the pool.
     /// @param sharesToBurn The number of shares to burn
@@ -261,7 +292,7 @@ interface IRNBWStaking {
     /// @return lastUpdateTime Timestamp of the last action on this position
     /// @return stakingStartTime Timestamp of the user's first stake
     /// @return totalCashbackReceived Lifetime cumulative cashback RNBW allocated
-    /// @return totalRnbwStaked Lifetime cumulative RNBW deposited via stake()
+    /// @return totalRnbwStaked Lifetime cumulative RNBW staked via any path
     /// @return totalRnbwUnstaked Lifetime cumulative net RNBW received from unstake()
     /// @return totalExitFeePaid Lifetime cumulative exit fees paid
     function getPosition(address user)
@@ -341,7 +372,7 @@ interface IRNBWStaking {
     function unpause() external;
 
     /// @notice Withdraw tokens from the contract. For RNBW, only excess above
-    ///         totalPooledRnbw + cashbackReserve can be withdrawn.
+    ///         totalPooledRnbw + cashbackReserve + stakingReserve can be withdrawn.
     /// @param token The token address to withdraw
     /// @param amount The amount to withdraw
     function emergencyWithdraw(address token, uint256 amount) external;
@@ -357,6 +388,14 @@ interface IRNBWStaking {
     /// @notice Deposit RNBW to fund the cashback reserve
     /// @param amount The amount of RNBW to deposit
     function fundCashbackReserve(uint256 amount) external;
+
+    /// @notice Deposit RNBW to fund the staking reserve (used by stakeForWithSignature)
+    /// @param amount The amount of RNBW to deposit
+    function fundStakingReserve(uint256 amount) external;
+
+    /// @notice Reclaim RNBW from the staking reserve (returns to safe)
+    /// @param amount The amount of RNBW to reclaim
+    function defundStakingReserve(uint256 amount) external;
 
     /// @notice Reclaim RNBW from the cashback reserve (returns to safe)
     /// @param amount The amount of RNBW to reclaim
