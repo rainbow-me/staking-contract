@@ -116,6 +116,11 @@ interface IRNBWStaking {
     /// @param amount The residual RNBW swept
     event ResidualSwept(uint256 amount);
 
+    /// @notice Emitted when pending exit fees are distributed into the staking pool
+    /// @param amount The amount of RNBW distributed
+    /// @param newTotalPooledRnbw The total pool after distribution
+    event PendingFeesDistributed(uint256 amount, uint256 newTotalPooledRnbw);
+
     /// @notice Emitted when tokens are withdrawn via emergencyWithdraw
     /// @param token The token address withdrawn
     /// @param amount The amount withdrawn
@@ -243,6 +248,10 @@ interface IRNBWStaking {
         uint256 expiry,
         bytes calldata signature
     ) external;
+
+    /// @notice Distribute pending exit fees into the staking pool.
+    ///         Callable by anyone. No-ops if cooldown hasn't passed or no fees pending.
+    function distributePendingFees() external;
 
     /// @notice Burn shares to unstake RNBW. An exit fee is deducted and stays in the pool.
     /// @param sharesToBurn The number of shares to burn

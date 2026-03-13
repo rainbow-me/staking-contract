@@ -40,6 +40,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public constant MAX_SIGNERS = 3; // Maximum number of trusted signers
     uint256 public constant MAX_BATCH_SIZE = 50;
     uint256 public constant MINIMUM_SHARES = 1000;
+    uint256 public constant FEE_DISTRIBUTION_COOLDOWN = 24 hours;
     address public constant DEAD_ADDRESS = address(0xdead);
 
     bytes32 public constant ALLOCATE_CASHBACK_TYPEHASH =
@@ -68,6 +69,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public cashbackReserve;
     uint256 public totalCashbackAllocated;
     uint256 public stakingReserve;
+    uint256 public pendingFees;
+    uint256 public lastFeeDistribution;
 
     // --- Users ---
     mapping(address => UserMeta) public userMeta;
@@ -95,6 +98,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         exitFeeBps = 1000;
         minStakeAmount = 1e18;
         allowPartialUnstake = false;
+        lastFeeDistribution = block.timestamp;
 
         _trustedSigners[_initialSigner] = true;
         trustedSignerCount = 1;
@@ -120,6 +124,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function stake(uint256 amount) external nonReentrant whenNotPaused {
+        _flushPendingFees();
         _stake(msg.sender, msg.sender, amount);
     }
 
@@ -127,6 +132,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function stakeFor(address recipient, uint256 amount) external nonReentrant whenNotPaused {
         if (recipient == address(0)) revert ZeroAddress();
         if (recipient == address(this) || recipient == DEAD_ADDRESS) revert InvalidRecipient();
+        _flushPendingFees();
         _stake(msg.sender, recipient, amount);
     }
 
@@ -140,6 +146,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     ) external nonReentrant whenNotPaused {
         if (recipient == address(0)) revert ZeroAddress();
         if (recipient == address(this) || recipient == DEAD_ADDRESS) revert InvalidRecipient();
+        _flushPendingFees();
         _validateSignature(
             recipient,
             nonce,
@@ -152,11 +159,13 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @inheritdoc IRNBWStaking
     function unstake(uint256 sharesToBurn) external nonReentrant whenNotPaused returns (uint256 netAmount) {
+        _flushPendingFees();
         netAmount = _unstake(msg.sender, sharesToBurn);
     }
 
     /// @inheritdoc IRNBWStaking
     function unstakeAll() external nonReentrant whenNotPaused returns (uint256 netAmount) {
+        _flushPendingFees();
         netAmount = _unstake(msg.sender, shares[msg.sender]);
     }
 
@@ -170,6 +179,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         uint256 expiry,
         bytes calldata signature
     ) external nonReentrant whenNotPaused {
+        _flushPendingFees();
         _validateAndAllocateCashback(user, rnbwCashback, nonce, expiry, signature);
     }
 
@@ -194,9 +204,16 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         }
         if (totalCashback > cashbackReserve) revert InsufficientCashbackBalance();
 
+        _flushPendingFees();
+
         for (uint256 i; i < len; ++i) {
             _validateAndAllocateCashback(users[i], rnbwCashbacks[i], nonces[i], expiries[i], signatures[i]);
         }
+    }
+
+    /// @inheritdoc IRNBWStaking
+    function distributePendingFees() external nonReentrant {
+        _flushPendingFees();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -234,7 +251,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @inheritdoc IRNBWStaking
     function getRnbwForShares(uint256 sharesAmount) public view returns (uint256) {
         if (totalShares == 0) return 0;
-        return (sharesAmount * totalPooledRnbw) / totalShares;
+        return (sharesAmount * _effectivePooledRnbw()) / totalShares;
     }
 
     /// @inheritdoc IRNBWStaking
@@ -242,13 +259,13 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (totalShares == 0) {
             return rnbwAmount <= MINIMUM_SHARES ? 0 : rnbwAmount - MINIMUM_SHARES;
         }
-        return (rnbwAmount * totalShares) / totalPooledRnbw;
+        return (rnbwAmount * totalShares) / _effectivePooledRnbw();
     }
 
     /// @inheritdoc IRNBWStaking
     function getExchangeRate() external view returns (uint256) {
         if (totalShares == 0) return 1e18;
-        return (totalPooledRnbw * 1e18) / totalShares;
+        return (_effectivePooledRnbw() * 1e18) / totalShares;
     }
 
     /// @inheritdoc IRNBWStaking
@@ -268,7 +285,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             if (amount <= MINIMUM_SHARES) return 0;
             sharesToMint = amount - MINIMUM_SHARES;
         } else {
-            sharesToMint = (amount * totalShares) / totalPooledRnbw;
+            sharesToMint = (amount * totalShares) / _effectivePooledRnbw();
         }
     }
 
@@ -328,7 +345,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (amount == 0) revert ZeroAmount();
         if (token == address(RNBW_TOKEN)) {
             uint256 balance = RNBW_TOKEN.balanceOf(address(this));
-            uint256 reserved = totalPooledRnbw + cashbackReserve + stakingReserve;
+            uint256 reserved = totalPooledRnbw + cashbackReserve + stakingReserve + pendingFees;
             uint256 excess = balance > reserved ? balance - reserved : 0;
             if (amount > excess) revert InsufficientExcess();
         }
@@ -489,7 +506,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
     /// @dev Core unstaking logic
     /// Flow: validate → calculate value & fee → burn shares → transfer net amount
-    /// Exit fee stays in pool, increasing exchange rate for remaining stakers
+    /// Exit fee goes to pendingFees buffer (distributed after 24h cooldown)
     function _unstake(address user, uint256 sharesToBurn) internal returns (uint256 netAmount) {
         // 1. Validate request
         if (sharesToBurn == 0) revert ZeroAmount();
@@ -519,24 +536,21 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (totalPooledRnbw < rnbwValue) revert AccountingError();
 
         // 5. Burn user's shares and update global totals
-        //    NOTE: Exit fee stays in pool (totalPooledRnbw only decreases by netAmount)
-        //    This increases exchange rate for remaining stakers
+        //    Exit fee goes to pendingFees (distributed after cooldown to prevent
+        //    whale self-absorption via Sybil sequential unstakes)
         shares[user] -= sharesToBurn;
         totalShares -= sharesToBurn;
-        totalPooledRnbw -= netAmount;
+        totalPooledRnbw -= rnbwValue;
+        pendingFees += exitFee;
 
-        // 6. Reset totalPooledRnbw when all shares are burned to prevent
-        //    share inflation attack. Without this, orphaned exit-fee RNBW
-        //    would remain in totalPooledRnbw while totalShares == 0.
-        //    The next staker would hit the `totalShares == 0` branch (1:1 minting)
-        //    but totalPooledRnbw += amount would stack on top of the orphaned dust,
-        //    creating an accounting desync where the pool has more RNBW than shares
-        //    represent. We sweep residual dust to the safe so the invariant
+        // 6. Reset pool when only dead shares remain. Sweep residual pool dust
+        //    and any undistributed pending fees to the safe so the invariant
         //    `totalShares == 0 ⟹ totalPooledRnbw == 0` always holds.
         uint256 residual;
-        if (totalShares == MINIMUM_SHARES && totalPooledRnbw > 0) {
-            residual = totalPooledRnbw;
+        if (totalShares == MINIMUM_SHARES) {
+            residual = totalPooledRnbw + pendingFees;
             totalPooledRnbw = 0;
+            pendingFees = 0;
             shares[DEAD_ADDRESS] = 0;
             totalShares = 0;
         }
@@ -618,6 +632,31 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
         // 5. Emit events
         emit Staked(user, amount, sharesToMint, shares[user]);
+        emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
+    }
+
+    /// @dev Returns totalPooledRnbw including distributable pending fees.
+    ///      Used by view functions so previews match actual tx outcomes.
+    function _effectivePooledRnbw() internal view returns (uint256) {
+        if (pendingFees > 0 && totalShares > 0 && block.timestamp >= lastFeeDistribution + FEE_DISTRIBUTION_COOLDOWN) {
+            return totalPooledRnbw + pendingFees;
+        }
+        return totalPooledRnbw;
+    }
+
+    /// @dev Flushes pending exit fees into the pool if the cooldown has elapsed.
+    ///      No-ops silently if cooldown hasn't passed or no fees pending.
+    function _flushPendingFees() internal {
+        if (pendingFees == 0) return;
+        if (block.timestamp < lastFeeDistribution + FEE_DISTRIBUTION_COOLDOWN) return;
+        if (totalShares == 0) return;
+
+        uint256 amount = pendingFees;
+        pendingFees = 0;
+        lastFeeDistribution = block.timestamp;
+        totalPooledRnbw += amount;
+
+        emit PendingFeesDistributed(amount, totalPooledRnbw);
         emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
     }
 
