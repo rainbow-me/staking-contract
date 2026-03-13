@@ -637,7 +637,10 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @dev Returns totalPooledRnbw including distributable pending fees.
-    ///      Used by view functions so previews match actual tx outcomes.
+    ///      View-only helper — internal mutating functions (_mintShares, _unstake,
+    ///      _allocateCashback) use raw totalPooledRnbw safely because every external
+    ///      entry point calls _flushPendingFees() first, guaranteeing pendingFees == 0
+    ///      by the time share calculations run.
     function _effectivePooledRnbw() internal view returns (uint256) {
         if (pendingFees > 0 && totalShares > 0 && block.timestamp >= lastFeeDistribution + FEE_DISTRIBUTION_COOLDOWN) {
             return totalPooledRnbw + pendingFees;
