@@ -251,6 +251,8 @@ interface IRNBWStaking {
 
     /// @notice Distribute pending exit fees into the staking pool.
     ///         Callable by anyone. No-ops if cooldown hasn't passed or no fees pending.
+    ///         Deliberately not paused-gated: fees already earned by stakers should
+    ///         remain distributable during a pause (no user risk, only benefits holders).
     function distributePendingFees() external;
 
     /// @notice Burn shares to unstake RNBW. An exit fee is deducted and stays in the pool.

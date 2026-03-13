@@ -212,6 +212,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @inheritdoc IRNBWStaking
+    /// @dev Not paused-gated by design — see interface NatSpec.
     function distributePendingFees() external nonReentrant {
         _flushPendingFees();
     }
