@@ -17,8 +17,12 @@ import {IRNBWStaking} from "./interfaces/IRNBWStaking.sol";
  * @notice Staking contract for $RNBW with exit fees using shares-based model
  * @dev Uses exchange rate model for automatic exit fee distribution:
  *      - Users receive "shares" when staking, not 1:1 RNBW
- *      - Exit fees stay in pool, increasing exchange rate for all stakers
- *      - No batch distribution needed - O(1) gas for any number of stakers
+ *      - Exit fees are buffered in pendingFees and flushed into the pool
+ *        after FEE_DISTRIBUTION_COOLDOWN (24h), breaking the instantaneous
+ *        self-absorption feedback loop
+ *      - Dead shares (MINIMUM_SHARES = 1000 → DEAD_ADDRESS) prevent the
+ *        share inflation / first-depositor attack
+ *      - No batch distribution needed — O(1) gas for any number of stakers
  *
  *      Cashback configuration is managed off-chain.
  *      Staked positions are NOT transferable (locked staking).
