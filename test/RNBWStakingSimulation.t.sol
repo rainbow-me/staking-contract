@@ -174,8 +174,15 @@ contract RNBWStakingSimulation is Test {
         vm.prank(bob);
         staking.unstake(50_000 ether);
 
+        (uint256 aliceImmediate,,,,,,,) = staking.getPosition(alice);
+        console.log("Alice value immediately after (fees pending):", aliceImmediate / 1e18);
+        assertEq(aliceImmediate, aliceBefore);
+
+        vm.warp(block.timestamp + 24 hours);
+        staking.distributePendingFees();
+
         (uint256 aliceAfter,,,,,,,) = staking.getPosition(alice);
-        console.log("Alice value after Bob unstakes:", aliceAfter / 1e18);
+        console.log("Alice value after fee distribution:", aliceAfter / 1e18);
         console.log("Alice gained:", (aliceAfter - aliceBefore) / 1e18);
         console.log("Exchange rate:", staking.getExchangeRate());
         console.log("=== EXIT FEE DISTRIBUTED ===");
@@ -316,6 +323,9 @@ contract RNBWStakingSimulation is Test {
         vm.prank(bob);
         staking.unstake(bobShares);
 
+        vm.warp(block.timestamp + 24 hours);
+        staking.distributePendingFees();
+
         uint256 expiry = block.timestamp + 60;
         bytes32 structHash =
             keccak256(abi.encode(staking.ALLOCATE_CASHBACK_TYPEHASH(), alice, uint256(1), allocateNonce, expiry));
@@ -453,7 +463,11 @@ contract RNBWStakingSimulation is Test {
         uint256 charlieShares = staking.shares(charlie);
         vm.prank(charlie);
         staking.unstake(charlieShares);
-        console.log("Charlie unstaked all (10% fee stays in pool)");
+        console.log("Charlie unstaked all (10% fee goes to pendingFees)");
+
+        vm.warp(block.timestamp + 24 hours);
+        staking.distributePendingFees();
+        console.log("Pending fees distributed after cooldown");
 
         uint256 rateAfter = staking.getExchangeRate();
         console.log("Exchange rate before:", rateBefore);
@@ -569,7 +583,11 @@ contract RNBWStakingSimulation is Test {
         uint256 bobShares = staking.shares(bob);
         vm.prank(bob);
         staking.unstake(bobShares);
-        console.log("PHASE 3: Bob unstakes all (exit fee boosts Alice)");
+        console.log("PHASE 3: Bob unstakes all (exit fee goes to pending)");
+
+        vm.warp(block.timestamp + 24 hours);
+        staking.distributePendingFees();
+        console.log("PHASE 3b: Pending fees distributed after cooldown");
 
         vm.startPrank(alice);
         staking.stake(10_000 ether);
@@ -670,12 +688,15 @@ contract RNBWStakingSimulation is Test {
         vm.prank(alice);
         staking.unstake(halfShares);
 
+        vm.warp(block.timestamp + 24 hours);
+        staking.distributePendingFees();
+
         uint256 rateAfter = staking.getExchangeRate();
         console.log("");
-        console.log("--- After Alice partial unstake (50% of shares) ---");
+        console.log("--- After Alice partial unstake + fee distribution ---");
         console.log("Rate after:         ", rateAfter);
 
-        // Rate must increase (exit fee stayed in pool with fewer shares)
+        // Rate must increase (exit fee distributed to pool with fewer shares)
         assertGt(rateAfter, rateBefore);
 
         // Self-yield: Alice's remaining shares are worth more at the new rate
