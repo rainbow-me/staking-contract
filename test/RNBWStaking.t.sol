@@ -97,6 +97,15 @@ contract RNBWStakingTest is Test {
         assertEq(rnbwToken.balanceOf(alice), INITIAL_BALANCE - amount);
     }
 
+    function test_StakeEmitsPoolTotalsUpdated() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        vm.expectEmit(true, true, false, true);
+        emit IRNBWStaking.PoolTotalsUpdated(100 ether, 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+    }
+
     function test_StakeRevertZeroAmount() public {
         vm.prank(alice);
         vm.expectRevert(IRNBWStaking.ZeroAmount.selector);
@@ -307,6 +316,23 @@ contract RNBWStakingTest is Test {
         assertApproxEqAbs(stakedAmount, 110 ether, deadShares);
         assertEq(userShares, 100 ether + 10 ether - deadShares);
         assertEq(staking.totalPooledRnbw(), 110 ether);
+    }
+
+    function test_AllocateCashbackEmitsPoolTotalsUpdated() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _depositCashback(10 ether);
+
+        uint256 nonce = 1;
+        uint256 expiry = block.timestamp + 60;
+        bytes memory sig = _signAllocateCashback(alice, 10 ether, nonce, expiry);
+
+        vm.expectEmit(true, true, false, true);
+        emit IRNBWStaking.PoolTotalsUpdated(110 ether, 110 ether);
+        staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, sig);
     }
 
     function test_AllocateCashbackRevertNoPosition() public {
