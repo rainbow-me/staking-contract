@@ -602,7 +602,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
         // 10. Emit events
         emit Unstaked(user, sharesToBurn, rnbwValue, exitFee, netAmount);
-        emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
+        emit PoolTotalsUpdated(totalPooledRnbw, totalShares);
     }
 
     /// @dev Stakes from the pre-funded staking reserve — no token transfer,
