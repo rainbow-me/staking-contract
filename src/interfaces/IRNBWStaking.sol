@@ -433,7 +433,8 @@ interface IRNBWStaking {
     /// @param amount The amount of RNBW to reclaim
     function defundCashbackReserve(uint256 amount) external;
 
-    /// @notice Propose a new safe address (step 1 of 2-step transfer, callable by current safe only)
+    /// @notice Propose a new safe address (step 1 of 2-step transfer, callable by current safe only).
+    ///         If a previous proposal exists, it is implicitly cancelled (emits SafeProposalCancelled).
     /// @param newSafe The proposed new safe address
     function proposeSafe(address newSafe) external;
 
