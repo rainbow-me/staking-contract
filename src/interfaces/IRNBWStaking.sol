@@ -8,6 +8,7 @@ interface IRNBWStaking {
     /// @notice Metadata tracked per staking position
     /// @param lastUpdateTime Timestamp of the last stake, unstake, or cashback action
     /// @param stakingStartTime Timestamp of the user's first stake (reset to 0 on full unstake)
+    /// @param lastStakeTime Timestamp of the last share-minting action (stake/stakeFor/stakeForWithSignature)
     /// @param totalCashbackReceived Lifetime cumulative cashback RNBW allocated to this user (never resets)
     /// @param totalRnbwStaked Lifetime cumulative RNBW staked via any path (never resets)
     /// @param totalRnbwUnstaked Lifetime cumulative net RNBW received from unstake(), after exit fee (never resets)
@@ -15,6 +16,7 @@ interface IRNBWStaking {
     struct UserMeta {
         uint256 lastUpdateTime;
         uint256 stakingStartTime;
+        uint256 lastStakeTime;
         uint256 totalCashbackReceived;
         uint256 totalRnbwStaked;
         uint256 totalRnbwUnstaked;
@@ -72,6 +74,11 @@ interface IRNBWStaking {
     /// @notice Emitted when partial unstake permission is toggled
     /// @param allowed Whether partial unstake is now allowed
     event PartialUnstakeToggled(bool allowed);
+
+    /// @notice Emitted when an address's cooldown exemption status is updated
+    /// @param addr The address whose exemption status changed
+    /// @param exempt Whether the address is now exempt from the stake cooldown
+    event CooldownExemptUpdated(address indexed addr, bool exempt);
 
     /// @notice Emitted when the admin deposits RNBW to fund cashback rewards
     /// @param from The depositor's address (must be safe)
@@ -220,6 +227,9 @@ interface IRNBWStaking {
     /// @notice Thrown when stakeFor is called with a forbidden recipient (contract itself or dead address)
     error InvalidRecipient();
 
+    /// @notice Thrown when a user tries to unstake before the staking cooldown has elapsed
+    error StakeCooldownNotMet(address user, uint256 lastStakeTime, uint256 cooldownEnd);
+
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -302,6 +312,7 @@ interface IRNBWStaking {
     /// @return userShares The user's raw share balance
     /// @return lastUpdateTime Timestamp of the last action on this position
     /// @return stakingStartTime Timestamp of the user's first stake
+    /// @return lastStakeTime Timestamp of the last share-minting action
     /// @return totalCashbackReceived Lifetime cumulative cashback RNBW allocated
     /// @return totalRnbwStaked Lifetime cumulative RNBW staked via any path
     /// @return totalRnbwUnstaked Lifetime cumulative net RNBW received from unstake()
@@ -314,6 +325,7 @@ interface IRNBWStaking {
             uint256 userShares,
             uint256 lastUpdateTime,
             uint256 stakingStartTime,
+            uint256 lastStakeTime,
             uint256 totalCashbackReceived,
             uint256 totalRnbwStaked,
             uint256 totalRnbwUnstaked,
@@ -425,4 +437,9 @@ interface IRNBWStaking {
     /// @notice Toggle whether partial unstake is allowed (default: false)
     /// @param allowed Whether to allow partial unstake
     function setAllowPartialUnstake(bool allowed) external;
+
+    /// @notice Set cooldown exemption for an address (e.g., future LST wrapper contracts)
+    /// @param addr The address to exempt or un-exempt
+    /// @param exempt Whether the address should be exempt from the stake cooldown
+    function setCooldownExempt(address addr, bool exempt) external;
 }
