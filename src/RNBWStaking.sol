@@ -757,6 +757,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
         // 5. Emit events
         emit Staked(user, amount, sharesToMint, shares[user]);
+        emit PoolTotalsUpdated(totalPooledRnbw, totalShares);
     }
 
     /// @dev Allocates cashback by minting shares directly in one step.
@@ -794,5 +795,6 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
         // 7. Emit events
         emit CashbackAllocated(user, rnbwCashback, sharesToMint);
+        emit PoolTotalsUpdated(totalPooledRnbw, totalShares);
     }
 }
