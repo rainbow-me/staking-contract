@@ -33,6 +33,10 @@ contract RNBWStakingTest is Test {
         staking.setAllowPartialUnstake(true);
     }
 
+    function _skipStakeCooldown() internal {
+        vm.warp(block.timestamp + 24 hours);
+    }
+
     function _signAllocateCashback(address user, uint256 rnbwCashback, uint256 nonce, uint256 expiry)
         internal
         view
@@ -119,6 +123,7 @@ contract RNBWStakingTest is Test {
         staking.stake(stakeAmount);
 
         uint256 sharesToBurn = staking.shares(alice);
+        _skipStakeCooldown();
         staking.unstake(sharesToBurn);
         vm.stopPrank();
 
@@ -136,6 +141,7 @@ contract RNBWStakingTest is Test {
 
         uint256 aliceShares = staking.shares(alice);
         uint256 sharesToBurn = aliceShares / 2;
+        _skipStakeCooldown();
         staking.unstake(sharesToBurn);
         vm.stopPrank();
 
@@ -181,6 +187,8 @@ contract RNBWStakingTest is Test {
         uint256 aliceShares = staking.shares(alice);
         uint256 halfShares = aliceShares / 2;
 
+        _skipStakeCooldown();
+
         vm.prank(alice);
         vm.expectRevert(
             abi.encodeWithSelector(IRNBWStaking.PartialUnstakeDisabled.selector, alice, halfShares, aliceShares)
@@ -205,6 +213,7 @@ contract RNBWStakingTest is Test {
         staking.setAllowPartialUnstake(true);
 
         uint256 halfShares = staking.shares(alice) / 2;
+        _skipStakeCooldown();
         vm.prank(alice);
         staking.unstake(halfShares);
         assertGt(staking.shares(alice), 0);
@@ -240,6 +249,7 @@ contract RNBWStakingTest is Test {
 
         uint256 aliceShares = staking.shares(alice);
         uint256 balanceBefore = rnbwToken.balanceOf(alice);
+        _skipStakeCooldown();
         staking.unstake(aliceShares);
         uint256 balanceAfter = rnbwToken.balanceOf(alice);
         vm.stopPrank();
@@ -258,7 +268,7 @@ contract RNBWStakingTest is Test {
         vm.stopPrank();
 
         uint256 deadShares = staking.MINIMUM_SHARES();
-        (uint256 stakedAmount, uint256 userShares,,,,,,) = staking.getPosition(alice);
+        (uint256 stakedAmount, uint256 userShares,,,,,,,) = staking.getPosition(alice);
 
         assertEq(userShares, amount - deadShares);
         assertApproxEqAbs(stakedAmount, amount, deadShares);
@@ -293,7 +303,7 @@ contract RNBWStakingTest is Test {
         staking.allocateCashbackWithSignature(alice, 10 ether, nonce, expiry, sig);
 
         uint256 deadShares = staking.MINIMUM_SHARES();
-        (uint256 stakedAmount, uint256 userShares,,,,,,) = staking.getPosition(alice);
+        (uint256 stakedAmount, uint256 userShares,,,,,,,) = staking.getPosition(alice);
         assertApproxEqAbs(stakedAmount, 110 ether, deadShares);
         assertEq(userShares, 100 ether + 10 ether - deadShares);
         assertEq(staking.totalPooledRnbw(), 110 ether);
@@ -683,6 +693,7 @@ contract RNBWStakingTest is Test {
         staking.setExitFeeBps(2000);
 
         uint256 balBefore = rnbwToken.balanceOf(alice);
+        _skipStakeCooldown();
         vm.prank(alice);
         staking.unstake(aliceShares);
         uint256 received = rnbwToken.balanceOf(alice) - balBefore;
@@ -698,6 +709,7 @@ contract RNBWStakingTest is Test {
         staking.stake(7 ether);
 
         uint256 aliceShares = staking.shares(alice);
+        _skipStakeCooldown();
         staking.unstake(aliceShares - 1);
         vm.stopPrank();
 
@@ -783,7 +795,7 @@ contract RNBWStakingTest is Test {
         staking.stake(50 ether);
         vm.stopPrank();
 
-        (,,,,, uint256 totalStaked,,) = staking.getPosition(alice);
+        (,,,,,, uint256 totalStaked,,) = staking.getPosition(alice);
         assertEq(totalStaked, 150 ether);
     }
 
@@ -792,10 +804,11 @@ contract RNBWStakingTest is Test {
         rnbwToken.approve(address(staking), 100 ether);
         staking.stake(100 ether);
         uint256 aliceShares = staking.shares(alice);
+        _skipStakeCooldown();
         staking.unstake(aliceShares);
         vm.stopPrank();
 
-        (,,,,, uint256 totalStaked, uint256 totalUnstaked, uint256 totalFees) = staking.getPosition(alice);
+        (,,,,,, uint256 totalStaked, uint256 totalUnstaked, uint256 totalFees) = staking.getPosition(alice);
         assertEq(totalStaked, 100 ether);
         assertGt(totalUnstaked, 0);
         assertGt(totalFees, 0);
@@ -819,7 +832,7 @@ contract RNBWStakingTest is Test {
         sig = _signAllocateCashback(alice, 5 ether, nonce, expiry);
         staking.allocateCashbackWithSignature(alice, 5 ether, nonce, expiry, sig);
 
-        (,,,, uint256 cashbackReceived,,,) = staking.getPosition(alice);
+        (,,,,, uint256 cashbackReceived,,,) = staking.getPosition(alice);
         assertEq(cashbackReceived, 15 ether);
         assertEq(staking.totalCashbackAllocated(), 15 ether);
     }
@@ -829,10 +842,11 @@ contract RNBWStakingTest is Test {
         rnbwToken.approve(address(staking), 200 ether);
         staking.stake(100 ether);
         uint256 aliceShares = staking.shares(alice);
+        _skipStakeCooldown();
         staking.unstake(aliceShares);
         vm.stopPrank();
 
-        (,,,, uint256 cashback, uint256 totalStaked, uint256 totalUnstaked, uint256 totalFees) =
+        (,,,,, uint256 cashback, uint256 totalStaked, uint256 totalUnstaked, uint256 totalFees) =
             staking.getPosition(alice);
 
         assertEq(totalStaked, 100 ether);
@@ -843,7 +857,7 @@ contract RNBWStakingTest is Test {
         staking.stake(50 ether);
         vm.stopPrank();
 
-        (,,,, uint256 cashback2, uint256 totalStaked2, uint256 totalUnstaked2, uint256 totalFees2) =
+        (,,,,, uint256 cashback2, uint256 totalStaked2, uint256 totalUnstaked2, uint256 totalFees2) =
             staking.getPosition(alice);
 
         assertEq(cashback2, cashback);
@@ -875,8 +889,8 @@ contract RNBWStakingTest is Test {
 
         assertEq(staking.totalCashbackAllocated(), 8 ether);
 
-        (,,,, uint256 aliceCashback,,,) = staking.getPosition(alice);
-        (,,,, uint256 bobCashback,,,) = staking.getPosition(bob);
+        (,,,,, uint256 aliceCashback,,,) = staking.getPosition(alice);
+        (,,,,, uint256 bobCashback,,,) = staking.getPosition(bob);
         assertEq(aliceCashback, 5 ether);
         assertEq(bobCashback, 3 ether);
     }
@@ -888,6 +902,7 @@ contract RNBWStakingTest is Test {
         uint256 aliceShares = staking.shares(alice);
         assertGt(aliceShares, 0);
 
+        _skipStakeCooldown();
         staking.unstakeAll();
         vm.stopPrank();
 
@@ -914,6 +929,7 @@ contract RNBWStakingTest is Test {
         assertEq(netReceived, rnbwValue - exitFee);
 
         uint256 balBefore = rnbwToken.balanceOf(alice);
+        _skipStakeCooldown();
         vm.prank(alice);
         staking.unstakeAll();
         uint256 balAfter = rnbwToken.balanceOf(alice);
@@ -936,6 +952,7 @@ contract RNBWStakingTest is Test {
         vm.startPrank(alice);
         rnbwToken.approve(address(staking), 100 ether);
         staking.stake(100 ether);
+        _skipStakeCooldown();
         staking.unstakeAll();
         vm.stopPrank();
 
@@ -1082,6 +1099,8 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         vm.stopPrank();
 
+        _skipStakeCooldown();
+
         vm.prank(bob);
         staking.unstakeAll();
 
@@ -1099,16 +1118,17 @@ contract RNBWStakingTest is Test {
         vm.startPrank(alice);
         rnbwToken.approve(address(staking), 200 ether);
         staking.stake(100 ether);
+        _skipStakeCooldown();
         staking.unstakeAll();
 
-        (,,, uint256 stakingStart,,,,) = staking.getPosition(alice);
+        (,,, uint256 stakingStart,,,,,) = staking.getPosition(alice);
         assertEq(stakingStart, 0);
 
         vm.warp(block.timestamp + 1 days);
         staking.stake(50 ether);
         vm.stopPrank();
 
-        (uint256 stakedAmount,, uint256 lastUpdate, uint256 newStart, uint256 cashback, uint256 totalStaked,,) =
+        (uint256 stakedAmount,, uint256 lastUpdate, uint256 newStart,, uint256 cashback, uint256 totalStaked,,) =
             staking.getPosition(alice);
         assertGt(stakedAmount, 0);
         assertGt(newStart, 0);
@@ -1173,7 +1193,7 @@ contract RNBWStakingTest is Test {
         staking.stake(0.5 ether);
         vm.stopPrank();
 
-        (uint256 stakedAmount,,,,,,,) = staking.getPosition(alice);
+        (uint256 stakedAmount,,,,,,,,) = staking.getPosition(alice);
         assertGt(stakedAmount, 100 ether);
     }
 
@@ -1360,14 +1380,14 @@ contract RNBWStakingTest is Test {
         staking.stakeFor(bob, 100 ether);
         vm.stopPrank();
 
-        (uint256 stakedAmount, uint256 userShares,, uint256 stakingStartTime,, uint256 totalStaked,,) =
+        (uint256 stakedAmount, uint256 userShares,, uint256 stakingStartTime,,, uint256 totalStaked,,) =
             staking.getPosition(bob);
         assertGt(stakedAmount, 0);
         assertGt(userShares, 0);
         assertEq(stakingStartTime, block.timestamp);
         assertEq(totalStaked, 100 ether);
 
-        (,,, uint256 aliceStart,, uint256 aliceStaked,,) = staking.getPosition(alice);
+        (,,, uint256 aliceStart,,, uint256 aliceStaked,,) = staking.getPosition(alice);
         assertEq(aliceStart, 0);
         assertEq(aliceStaked, 0);
     }
@@ -1381,6 +1401,7 @@ contract RNBWStakingTest is Test {
         uint256 bobShares = staking.shares(bob);
         uint256 bobBalBefore = rnbwToken.balanceOf(bob);
 
+        _skipStakeCooldown();
         vm.prank(bob);
         staking.unstake(bobShares);
 
@@ -1461,6 +1482,7 @@ contract RNBWStakingTest is Test {
         }
 
         uint256 aliceShares = staking.shares(alice);
+        _skipStakeCooldown();
         vm.startPrank(alice);
         staking.unstake(aliceShares - 1);
 
@@ -1519,7 +1541,7 @@ contract RNBWStakingTest is Test {
 
         staking.stakeForWithSignature(bob, amount, 0, block.timestamp + 1 hours, sig);
 
-        (,,, uint256 stakingStartTime,, uint256 totalStaked,,) = staking.getPosition(bob);
+        (,,, uint256 stakingStartTime,,, uint256 totalStaked,,) = staking.getPosition(bob);
         assertEq(stakingStartTime, block.timestamp);
         assertEq(totalStaked, amount);
     }
@@ -1723,6 +1745,7 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         vm.stopPrank();
 
+        _skipStakeCooldown();
         uint256 poolBefore = staking.totalPooledRnbw();
 
         vm.prank(alice);
@@ -1733,6 +1756,9 @@ contract RNBWStakingTest is Test {
     }
 
     function test_PendingFeesNotDistributedBeforeCooldown() public {
+        address carol = makeAddr("carol");
+        rnbwToken.mint(carol, INITIAL_BALANCE);
+
         vm.startPrank(alice);
         rnbwToken.approve(address(staking), 100 ether);
         staking.stake(100 ether);
@@ -1742,6 +1768,17 @@ contract RNBWStakingTest is Test {
         rnbwToken.approve(address(staking), 100 ether);
         staking.stake(100 ether);
         vm.stopPrank();
+
+        vm.startPrank(carol);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _skipStakeCooldown();
+
+        vm.prank(carol);
+        staking.unstakeAll();
+        staking.distributePendingFees();
 
         vm.prank(alice);
         staking.unstakeAll();
@@ -1766,6 +1803,7 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         vm.stopPrank();
 
+        _skipStakeCooldown();
         vm.prank(alice);
         staking.unstakeAll();
 
@@ -1791,6 +1829,7 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         vm.stopPrank();
 
+        _skipStakeCooldown();
         vm.prank(alice);
         staking.unstakeAll();
 
@@ -1816,6 +1855,7 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         vm.stopPrank();
 
+        _skipStakeCooldown();
         vm.prank(alice);
         staking.unstakeAll();
 
@@ -1831,6 +1871,9 @@ contract RNBWStakingTest is Test {
     }
 
     function test_WhaleSybilMitigated() public {
+        address carol = makeAddr("carol");
+        rnbwToken.mint(carol, INITIAL_BALANCE);
+
         vm.startPrank(alice);
         rnbwToken.approve(address(staking), 900 ether);
         staking.stake(900 ether);
@@ -1840,6 +1883,17 @@ contract RNBWStakingTest is Test {
         rnbwToken.approve(address(staking), 100 ether);
         staking.stake(100 ether);
         vm.stopPrank();
+
+        vm.startPrank(carol);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _skipStakeCooldown();
+
+        vm.prank(carol);
+        staking.unstakeAll();
+        staking.distributePendingFees();
 
         uint256 bobSharesBefore = staking.shares(bob);
         uint256 bobValueBefore = staking.getRnbwForShares(bobSharesBefore);
@@ -1876,6 +1930,8 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         vm.stopPrank();
 
+        _skipStakeCooldown();
+
         vm.prank(alice);
         staking.unstakeAll();
         uint256 pending1 = staking.pendingFees();
@@ -1898,6 +1954,7 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         vm.stopPrank();
 
+        _skipStakeCooldown();
         vm.prank(alice);
         staking.unstakeAll();
 
@@ -1922,6 +1979,7 @@ contract RNBWStakingTest is Test {
 
         uint256 safeBefore = rnbwToken.balanceOf(admin);
 
+        _skipStakeCooldown();
         vm.prank(alice);
         staking.unstakeAll();
 
@@ -1948,5 +2006,85 @@ contract RNBWStakingTest is Test {
         assertEq(staking.totalShares(), 0);
         assertEq(staking.pendingFees(), 0);
         staking.distributePendingFees();
+    }
+
+    // ── Cooldown Exemption ──────────────────────────────────────────
+
+    function test_SetCooldownExempt() public {
+        assertFalse(staking.cooldownExempt(alice));
+        vm.prank(admin);
+        staking.setCooldownExempt(alice, true);
+        assertTrue(staking.cooldownExempt(alice));
+    }
+
+    function test_SetCooldownExemptRevertUnauthorized() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.setCooldownExempt(alice, true);
+    }
+
+    function test_SetCooldownExemptRevertZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.ZeroAddress.selector);
+        staking.setCooldownExempt(address(0), true);
+    }
+
+    function test_CooldownExemptCanUnstakeImmediately() public {
+        vm.prank(admin);
+        staking.setCooldownExempt(alice, true);
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        staking.unstakeAll();
+        vm.stopPrank();
+
+        assertEq(staking.shares(alice), 0);
+    }
+
+    function test_NonExemptCannotUnstakeBeforeCooldown() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.expectRevert();
+        staking.unstakeAll();
+        vm.stopPrank();
+    }
+
+    function test_StakeForDoesNotResetRecipientCooldown() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        _skipStakeCooldown();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 1);
+        staking.stakeFor(alice, 1);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        staking.unstakeAll();
+        assertEq(staking.shares(alice), 0);
+    }
+
+    function test_CooldownExemptRemovedReenablesCooldown() public {
+        vm.prank(admin);
+        staking.setCooldownExempt(alice, true);
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 200 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(admin);
+        staking.setCooldownExempt(alice, false);
+
+        vm.startPrank(alice);
+        staking.stake(100 ether);
+        vm.expectRevert();
+        staking.unstakeAll();
+        vm.stopPrank();
     }
 }

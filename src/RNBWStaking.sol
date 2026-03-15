@@ -45,6 +45,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public constant MAX_BATCH_SIZE = 50;
     uint256 public constant MINIMUM_SHARES = 1000;
     uint256 public constant FEE_DISTRIBUTION_COOLDOWN = 24 hours;
+    uint256 public constant STAKE_COOLDOWN = 24 hours;
     address public constant DEAD_ADDRESS = address(0xdead);
 
     bytes32 public constant ALLOCATE_CASHBACK_TYPEHASH =
@@ -79,6 +80,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     // --- Users ---
     mapping(address => UserMeta) public userMeta;
     mapping(address => mapping(uint256 => bool)) public usedNonces;
+
+    // --- Cooldown ---
+    mapping(address => bool) public cooldownExempt;
 
     // --- Signers ---
     mapping(address => bool) internal _trustedSigners;
@@ -234,6 +238,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             uint256 userShares,
             uint256 lastUpdateTime,
             uint256 stakingStartTime,
+            uint256 lastStakeTime,
             uint256 totalCashbackReceived,
             uint256 totalRnbwStaked,
             uint256 totalRnbwUnstaked,
@@ -246,6 +251,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             shares[user],
             meta.lastUpdateTime,
             meta.stakingStartTime,
+            meta.lastStakeTime,
             meta.totalCashbackReceived,
             meta.totalRnbwStaked,
             meta.totalRnbwUnstaked,
@@ -444,6 +450,14 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         emit PartialUnstakeToggled(allowed);
     }
 
+    /// @inheritdoc IRNBWStaking
+    function setCooldownExempt(address addr, bool exempt) external onlySafe {
+        if (addr == address(0)) revert ZeroAddress();
+        if (cooldownExempt[addr] == exempt) revert NoChange();
+        cooldownExempt[addr] = exempt;
+        emit CooldownExemptUpdated(addr, exempt);
+    }
+
     /*//////////////////////////////////////////////////////////////
                            INTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -506,7 +520,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         RNBW_TOKEN.safeTransferFrom(from, address(this), amount);
 
         // 3. Calculate shares, update pool totals, set metadata, emit events
-        _mintShares(user, amount);
+        //    Only reset cooldown on self-stake (from == user) to prevent
+        //    griefing via stakeFor(victim, 1 wei) resetting victim's cooldown.
+        _mintShares(user, amount, from == user);
     }
 
     /// @dev Core unstaking logic
@@ -519,6 +535,13 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (shares[user] < sharesToBurn) revert InsufficientShares(user, sharesToBurn, shares[user]);
         if (!allowPartialUnstake && sharesToBurn != shares[user]) {
             revert PartialUnstakeDisabled(user, sharesToBurn, shares[user]);
+        }
+
+        if (!cooldownExempt[user]) {
+            uint256 cooldownEnd = userMeta[user].lastStakeTime + STAKE_COOLDOWN;
+            if (block.timestamp < cooldownEnd) {
+                revert StakeCooldownNotMet(user, userMeta[user].lastStakeTime, cooldownEnd);
+            }
         }
 
         // 2. Calculate RNBW value of shares at current exchange rate
@@ -600,12 +623,15 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         stakingReserve -= amount;
 
         // 3. Calculate shares, update pool totals, set metadata, emit events
-        _mintShares(user, amount);
+        //    Backend-initiated reserve stakes always reset cooldown (trusted signer required).
+        _mintShares(user, amount, true);
     }
 
     /// @dev Shared share-minting logic used by _stake and _stakeFromReserve.
     ///      Calculates shares, updates pool totals, sets metadata, emits events.
-    function _mintShares(address user, uint256 amount) internal {
+    /// @param resetCooldown If true, resets the user's unstake cooldown (lastStakeTime).
+    ///        False for stakeFor() to prevent griefing via 1-wei deposits resetting cooldown.
+    function _mintShares(address user, uint256 amount, bool resetCooldown) internal {
         // 1. Calculate shares to mint based on current exchange rate
         //    Formula: sharesToMint = (amount * totalShares) / totalPooledRnbw
         //    First staker: 1:1 ratio (shares = amount)
@@ -633,6 +659,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             meta.stakingStartTime = block.timestamp;
         }
         meta.lastUpdateTime = block.timestamp;
+        if (resetCooldown || meta.lastStakeTime == 0) {
+            meta.lastStakeTime = block.timestamp;
+        }
         meta.totalRnbwStaked += amount;
 
         // 5. Emit events

@@ -19,6 +19,7 @@ Shares-based staking contract for $RNBW on Base. Exit fees are buffered in `pend
 | Cashback reserve | Pre-funded via `fundCashbackReserve()`, tracked separately, protected from emergency withdrawal |
 | Staking reserve | Pre-funded via `fundStakingReserve()`, used by `stakeForWithSignature`, protected from emergency withdrawal |
 | Delayed fee distribution | Exit fees go to `pendingFees` buffer, flushed into pool after `FEE_DISTRIBUTION_COOLDOWN` (24h). `distributePendingFees()` callable by anyone. Auto-flushed on every state-changing operation. |
+| Stake cooldown | 24h lock after staking before unstaking is allowed. `stakeFor` does not reset the recipient's cooldown (prevents griefing). Admin can exempt addresses via `setCooldownExempt()` (e.g., future LST wrapper). |
 | Access control | Safe (multisig) for admin ops, 2-step safe transfer, up to 3 trusted EIP-712 signers |
 | Signatures | EIP-712 with expiry + nonce replay protection (cashback and stakeFor) |
 
@@ -53,7 +54,7 @@ Steps:
 3. Calculate shares -- `sharesToMint = (amount * totalShares) / totalPooledRnbw`. First staker: `sharesToMint = amount - 1000` (dead shares minted to `0xdead`).
 4. Guard -- reverts with `ZeroSharesMinted` if shares round to 0.
 5. Mint -- update `shares[recipient]`, `totalShares`, `totalPooledRnbw`.
-6. Metadata -- set `stakingStartTime` (first stake), accumulate `totalRnbwStaked` on the recipient's position.
+6. Metadata -- set `stakingStartTime` (first stake), accumulate `totalRnbwStaked` on the recipient's position. Set `lastStakeTime` on self-stake or first-ever stake (starts 24h cooldown). `stakeFor` does not reset the recipient's `lastStakeTime` on subsequent stakes to prevent griefing via 1-wei deposits.
 
 Example:
 
@@ -84,7 +85,7 @@ Steps:
 
 Both functions return `netAmount` (the RNBW transferred to the user after exit fee).
 
-1. Validate -- shares > 0, sufficient balance, partial unstake check.
+1. Validate -- shares > 0, sufficient balance, partial unstake check, 24h stake cooldown check (skipped for `cooldownExempt` addresses).
 2. Calculate value -- `rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares`.
 3. Exit fee -- `exitFee = rnbwValue * exitFeeBps / 10,000` (ceil-rounded, default 10%).
 4. Net amount -- if ceil-rounded fee consumes everything (dust), `netAmount = 0` and shares are burned with no transfer (lets users clear dust positions).
@@ -164,6 +165,7 @@ cashbackReserve = 4,500, Alice: 50,500 shares
 | Exchange Rate | `getExchangeRate()` (scaled by 1e18, includes distributable pending fees) |
 | Shares (advanced) | `getPosition(user).userShares` |
 | Staking Since | `getPosition(user).stakingStartTime` |
+| Cooldown Expires | `getPosition(user).lastStakeTime + 24h` (0 if `cooldownExempt`) |
 | Lifetime Cashback | `getPosition(user).totalCashbackReceived` |
 | Lifetime Staked | `getPosition(user).totalRnbwStaked` |
 | Lifetime Unstaked | `getPosition(user).totalRnbwUnstaked` (net, after exit fee) |
@@ -236,7 +238,7 @@ const blockA = blockB - 302_400;                 // ~7 days ago on Base
 
 ```javascript
 const [
-    stakedAmount, userShares, lastUpdateTime, stakingStartTime,
+    stakedAmount, userShares, lastUpdateTime, stakingStartTime, lastStakeTime,
     totalCashbackReceived, totalRnbwStaked, totalRnbwUnstaked, totalExitFeePaid
 ] = await contract.getPosition(user);
 
@@ -382,6 +384,7 @@ Where:
 - Partial unstake toggle: `allowPartialUnstake` (default: disabled)
 - Preview dust guard: `previewStake()` returns 0 instead of reverting for dust amounts
 - Recipient guards: `stakeFor` and `stakeForWithSignature` reject `address(0)`, `address(this)`, and `DEAD_ADDRESS` to prevent token locking and dead-share corruption
+- Stake cooldown: 24h lock after staking before unstaking. Prevents sybil APY manipulation (rapid stake→unstake cycling to inflate exchange rate). `stakeFor` does not reset the recipient's cooldown (prevents 1-wei griefing). First-ever stake always sets `lastStakeTime` (prevents fresh-sybil bypass). Admin can exempt addresses via `setCooldownExempt()` for future integrations (e.g., LST wrapper).
 - Batch size limit: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve check
 - Rich error context: user-facing errors include address and value params for debugging
 
@@ -397,6 +400,7 @@ All user-facing errors include contextual parameters for off-chain debugging. Ad
 | `ZeroSharesMinted` | `(user, amount)` | `_mintShares`, `_allocateCashback` |
 | `InvalidRecipient` | -- | `stakeFor`, `stakeForWithSignature` |
 | `PartialUnstakeDisabled` | `(user, sharesToBurn, totalUserShares)` | `_unstake` |
+| `StakeCooldownNotMet` | `(user, lastStakeTime, cooldownEnd)` | `_unstake` |
 
 ### Dead Shares Lifecycle
 
@@ -513,6 +517,8 @@ Deposit: xRNBW takes RNBW from the user, calls `stakeFor(address(xRNBW), amount)
 Redeem: user burns xRNBW, contract calls `unstake(sharesToBurn)`, forwards `netAmount` to user.
 
 `stakeFor`, `stakeForWithSignature`, and the `netAmount` return value were added specifically for this. `stakeForWithSignature` adds backend-controlled staking from the pre-funded staking reserve with EIP-712 replay protection. `InvalidRecipient` keeps people from accidentally staking to the staking contract itself or `0xdead`.
+
+The xRNBW wrapper address should be added to `cooldownExempt` via `setCooldownExempt(xRNBW, true)` so it can unstake on behalf of users without being blocked by the 24h stake cooldown. Since `stakeFor` does not reset the recipient's cooldown, deposits from multiple users won't perpetually lock the wrapper.
 
 ## Security
 
