@@ -56,10 +56,17 @@ interface IRNBWStaking {
     /// @param signer The signer's address
     event SignerRemoved(address indexed signer);
 
-    /// @notice Emitted after any action that changes the exchange rate
+    /// @notice Emitted exclusively by _flushPendingFees — the only operation that changes the exchange rate.
+    ///         Frontends can use this event to trigger yield/APY updates.
     /// @param totalPooledRnbw The total RNBW in the staking pool
     /// @param totalShares The total shares outstanding
     event ExchangeRateUpdated(uint256 totalPooledRnbw, uint256 totalShares);
+
+    /// @notice Emitted after stake, unstake, or cashback allocation — pool totals change but
+    ///         the exchange rate stays constant (both sides scale proportionally, modulo rounding dust).
+    /// @param totalPooledRnbw The total RNBW in the staking pool
+    /// @param totalShares The total shares outstanding
+    event PoolTotalsUpdated(uint256 totalPooledRnbw, uint256 totalShares);
 
     /// @notice Emitted when the exit fee is updated
     /// @param oldExitFeeBps The previous exit fee in basis points
