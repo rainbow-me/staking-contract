@@ -703,7 +703,7 @@ contract RNBWStakingTest is Test {
 
         uint256 deadShares = staking.MINIMUM_SHARES();
         assertEq(staking.totalShares(), 1 + deadShares);
-        assertGt(staking.totalPooledRnbw(), 0.5 ether);
+        assertGt(staking.totalPooledRnbw() + staking.pendingFees(), 0.5 ether);
 
         vm.startPrank(bob);
         rnbwToken.approve(address(staking), 1 ether);
@@ -1708,5 +1708,245 @@ contract RNBWStakingTest is Test {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.InsufficientExcess.selector);
         staking.emergencyWithdraw(address(rnbwToken), 1);
+    }
+
+    // ===== Delayed Fee Distribution Tests =====
+
+    function test_UnstakeRoutesFeetToPendingFees() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 poolBefore = staking.totalPooledRnbw();
+
+        vm.prank(alice);
+        staking.unstakeAll();
+
+        assertGt(staking.pendingFees(), 0);
+        assertLt(staking.totalPooledRnbw(), poolBefore);
+    }
+
+    function test_PendingFeesNotDistributedBeforeCooldown() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        staking.unstakeAll();
+
+        uint256 pending = staking.pendingFees();
+        assertGt(pending, 0);
+
+        uint256 poolBefore = staking.totalPooledRnbw();
+        staking.distributePendingFees();
+        assertEq(staking.totalPooledRnbw(), poolBefore);
+        assertEq(staking.pendingFees(), pending);
+    }
+
+    function test_PendingFeesDistributedAfterCooldown() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        staking.unstakeAll();
+
+        uint256 pending = staking.pendingFees();
+        uint256 poolBefore = staking.totalPooledRnbw();
+
+        vm.warp(block.timestamp + 24 hours);
+
+        staking.distributePendingFees();
+
+        assertEq(staking.pendingFees(), 0);
+        assertEq(staking.totalPooledRnbw(), poolBefore + pending);
+    }
+
+    function test_FlushTriggeredOnStake() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 200 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 200 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        staking.unstakeAll();
+
+        uint256 pending = staking.pendingFees();
+        assertGt(pending, 0);
+
+        vm.warp(block.timestamp + 24 hours);
+
+        vm.prank(bob);
+        staking.stake(10 ether);
+
+        assertEq(staking.pendingFees(), 0);
+    }
+
+    function test_FlushTriggeredOnUnstake() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        staking.unstakeAll();
+
+        uint256 pending = staking.pendingFees();
+        assertGt(pending, 0);
+
+        vm.warp(block.timestamp + 24 hours);
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        assertEq(staking.pendingFees(), 0);
+    }
+
+    function test_WhaleSybilMitigated() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 900 ether);
+        staking.stake(900 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 bobSharesBefore = staking.shares(bob);
+        uint256 bobValueBefore = staking.getRnbwForShares(bobSharesBefore);
+
+        vm.prank(alice);
+        staking.unstakeAll();
+
+        uint256 bobValueAfterUnstake = staking.getRnbwForShares(bobSharesBefore);
+        assertEq(bobValueAfterUnstake, bobValueBefore);
+
+        vm.warp(block.timestamp + 24 hours);
+        staking.distributePendingFees();
+
+        uint256 bobValueAfterDistribution = staking.getRnbwForShares(bobSharesBefore);
+        assertGt(bobValueAfterDistribution, bobValueBefore);
+    }
+
+    function test_SequentialUnstakesAccumulatePendingFees() public {
+        address carol = makeAddr("carol");
+        rnbwToken.mint(carol, INITIAL_BALANCE);
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(carol);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        staking.unstakeAll();
+        uint256 pending1 = staking.pendingFees();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+        uint256 pending2 = staking.pendingFees();
+
+        assertGt(pending2, pending1);
+    }
+
+    function test_EmergencyWithdrawProtectsPendingFees() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        staking.unstakeAll();
+
+        uint256 pending = staking.pendingFees();
+        assertGt(pending, 0);
+
+        rnbwToken.mint(address(staking), 10 ether);
+
+        vm.prank(admin);
+        staking.emergencyWithdraw(address(rnbwToken), 10 ether);
+
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.InsufficientExcess.selector);
+        staking.emergencyWithdraw(address(rnbwToken), 1);
+    }
+
+    function test_ResidualSweepIncludesPendingFees() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 safeBefore = rnbwToken.balanceOf(admin);
+
+        vm.prank(alice);
+        staking.unstakeAll();
+
+        assertEq(staking.pendingFees(), 0);
+        assertEq(staking.totalPooledRnbw(), 0);
+        assertEq(staking.totalShares(), 0);
+
+        uint256 safeAfter = rnbwToken.balanceOf(admin);
+        assertGt(safeAfter, safeBefore);
+    }
+
+    function test_DistributePendingFeesNoOpWhenZero() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 poolBefore = staking.totalPooledRnbw();
+        staking.distributePendingFees();
+        assertEq(staking.totalPooledRnbw(), poolBefore);
+    }
+
+    function test_DistributePendingFeesNoOpWhenNoShares() public {
+        assertEq(staking.totalShares(), 0);
+        assertEq(staking.pendingFees(), 0);
+        staking.distributePendingFees();
     }
 }

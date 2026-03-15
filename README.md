@@ -1,6 +1,6 @@
 # RNBWStaking
 
-Shares-based staking contract for $RNBW on Base. Exit fees stay in the pool and increase the exchange rate for remaining stakers. Positions are non-transferable.
+Shares-based staking contract for $RNBW on Base. Exit fees are buffered in `pendingFees` and distributed to the pool after a 24-hour cooldown, preventing whale Sybil self-absorption. Positions are non-transferable.
 
 - Chain: Base (EVM)
 - Solidity: 0.8.24
@@ -13,11 +13,12 @@ Shares-based staking contract for $RNBW on Base. Exit fees stay in the pool and 
 |---------|---------|
 | Staking | `stake()` / `stakeFor()` / `stakeForWithSignature()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702). `stakeFor` enables third-party integrations (e.g., liquid staking token). `stakeForWithSignature` stakes from a pre-funded reserve with EIP-712 authorization. |
 | Unstaking | `unstake()` -- user calls directly or via relay. Partial unstake toggleable by admin (default: disabled) |
-| Exit fee | Configurable 1%--75%, default 10% -- stays in pool |
+| Exit fee | Configurable 1%--75%, default 10% -- buffered in `pendingFees`, distributed after 24h cooldown |
 | Cashback | Backend allocates via `allocateCashbackWithSignature()` -- mints shares immediately in one step |
 | Dead shares | First deposit mints 1000 shares to `0xdead` (UniswapV2-style inflation protection) |
 | Cashback reserve | Pre-funded via `fundCashbackReserve()`, tracked separately, protected from emergency withdrawal |
 | Staking reserve | Pre-funded via `fundStakingReserve()`, used by `stakeForWithSignature`, protected from emergency withdrawal |
+| Delayed fee distribution | Exit fees go to `pendingFees` buffer, flushed into pool after `FEE_DISTRIBUTION_COOLDOWN` (24h). `distributePendingFees()` callable by anyone. Auto-flushed on every state-changing operation. |
 | Access control | Safe (multisig) for admin ops, 2-step safe transfer, up to 3 trusted EIP-712 signers |
 | Signatures | EIP-712 with expiry + nonce replay protection (cashback and stakeFor) |
 
@@ -25,7 +26,7 @@ Shares-based staking contract for $RNBW on Base. Exit fees stay in the pool and 
 
 ### Core Concept: Shares and Exchange Rate
 
-When you stake RNBW you receive shares, not a 1:1 token balance. The exchange rate between shares and RNBW changes over time as exit fees accumulate in the pool.
+When you stake RNBW you receive shares, not a 1:1 token balance. The exchange rate between shares and RNBW changes over time as exit fees are distributed into the pool (after a 24-hour cooldown).
 
 ```
 Exchange Rate = totalPooledRnbw / totalShares
@@ -87,8 +88,8 @@ Both functions return `netAmount` (the RNBW transferred to the user after exit f
 2. Calculate value -- `rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares`.
 3. Exit fee -- `exitFee = rnbwValue * exitFeeBps / 10,000` (ceil-rounded, default 10%).
 4. Net amount -- if ceil-rounded fee consumes everything (dust), `netAmount = 0` and shares are burned with no transfer (lets users clear dust positions).
-5. Burn shares -- deduct from user and totals. Only `netAmount` leaves the pool; exit fee stays.
-6. Residual sweep -- if only dead shares remain, sweep pool to safe and reset to clean slate.
+5. Burn shares -- deduct from user and totals. `totalPooledRnbw -= rnbwValue` (full gross removed). Exit fee goes to `pendingFees` buffer (not immediately into pool).
+6. Residual sweep -- if only dead shares remain, sweep pool + undistributed `pendingFees` to safe and reset to clean slate.
 7. Metadata -- track `totalRnbwUnstaked`, `totalExitFeePaid`. Reset `stakingStartTime` on full exit.
 8. Transfer -- send `netAmount` to user (skipped when `netAmount == 0`).
 
@@ -103,12 +104,16 @@ rnbwValue = (50,000 * 100,000) / 100,000 = 50,000 RNBW
 exitFee   = 50,000 * 1000 / 10,000       = 5,000 RNBW
 netAmount = 50,000 - 5,000                = 45,000 RNBW
 
-Pool after: totalPooledRnbw = 55,000, totalShares = 50,000
+Pool after: totalPooledRnbw = 50,000, totalShares = 50,000, pendingFees = 5,000
 Bob receives: 45,000 RNBW
+Alice's value (immediate): 50,000 * 50,000 / 50,000 = 50,000 RNBW (unchanged)
+
+--- After 24h cooldown, fees distributed ---
+Pool after: totalPooledRnbw = 55,000, totalShares = 50,000, pendingFees = 0
 Alice's value: 50,000 * 55,000 / 50,000 = 55,000 RNBW (+5,000 gain)
 ```
 
-The exit fee stays in the pool, increasing the exchange rate from 1.0 to 1.10 for remaining stakers.
+The exit fee goes to `pendingFees` and is distributed after a 24-hour cooldown, increasing the exchange rate from 1.0 to 1.10. This prevents a whale from self-absorbing fees via sequential Sybil unstakes.
 
 ---
 
@@ -156,7 +161,7 @@ cashbackReserve = 4,500, Alice: 50,500 shares
 | UI Element | Source |
 |------------|--------|
 | Staked RNBW | `getPosition(user).stakedAmount` (= shares converted at current exchange rate) |
-| Exchange Rate | `getExchangeRate()` (scaled by 1e18) |
+| Exchange Rate | `getExchangeRate()` (scaled by 1e18, includes distributable pending fees) |
 | Shares (advanced) | `getPosition(user).userShares` |
 | Staking Since | `getPosition(user).stakingStartTime` |
 | Lifetime Cashback | `getPosition(user).totalCashbackReceived` |
@@ -176,7 +181,7 @@ Global APY is computed off-chain by comparing on-chain state at two blocks. No i
 
 | Component | What drives it | On-chain signal |
 |-----------|---------------|-----------------|
-| Exit Fee APY | Users unstaking (10% stays in pool) | `getExchangeRate()` increases |
+| Exit Fee APY | Users unstaking (10% buffered, distributed after 24h) | `getExchangeRate()` increases after distribution |
 | Cashback APY | Cashback allocated to stakers | `totalCashbackAllocated` increases |
 
 Cashback does not move the exchange rate (shares and pool grow proportionally), so it must be tracked separately.
@@ -366,10 +371,11 @@ Where:
 - Dead shares: 1000 shares minted to `0xdead` on first deposit (prevents share inflation / first depositor attack)
 - Cashback reserve: tracked separately from staking pool, protected from `emergencyWithdraw`
 - Staking reserve: tracked separately, protected from `emergencyWithdraw`, reclaimable via `defundStakingReserve()`
-- Emergency withdraw: for RNBW, only excess above `totalPooledRnbw + cashbackReserve + stakingReserve` can be withdrawn -- the pool and both reserves are untouchable. Non-RNBW tokens have no restriction (rescue for accidental sends).
+- Emergency withdraw: for RNBW, only excess above `totalPooledRnbw + cashbackReserve + stakingReserve + pendingFees` can be withdrawn -- the pool, both reserves, and buffered fees are untouchable. Non-RNBW tokens have no restriction (rescue for accidental sends).
 - Min stake floor: `minStakeAmount` cannot be set below 1 RNBW
 - Inflation guard: `ZeroSharesMinted` revert protects depositors from rounding attacks
-- Residual sweep: when only dead shares remain, orphaned exit fees are swept to safe and pool is reset
+- Delayed fee distribution: exit fees go to `pendingFees` buffer and are flushed into the pool after `FEE_DISTRIBUTION_COOLDOWN` (24h), preventing whale Sybil self-absorption via sequential unstakes. `distributePendingFees()` is callable by anyone and deliberately not paused-gated.
+- Residual sweep: when only dead shares remain, orphaned pool dust + undistributed `pendingFees` are swept to safe and pool is reset
 - Exit fee rounding: ceiling division ensures fractional wei favors the protocol
 - Dust unstake handling: when ceil-rounded exit fee consumes 100% of a dust unstake, shares are burned with no transfer (clears dust positions without reverting)
 - 2-step safe transfer: `proposeSafe()` + `acceptSafe()` prevents transfer to wrong address
@@ -402,7 +408,7 @@ Active pool → no dead shares minted, count stays at 1000
 Last user unstakes → residual sweep resets dead shares to 0 (clean slate)
 ```
 
-Invariant: `totalShares == 0 ⟹ totalPooledRnbw == 0`.
+Invariant: `totalShares == 0 ⟹ totalPooledRnbw == 0 && pendingFees == 0`.
 
 ## Build
 
@@ -487,7 +493,7 @@ Backend responsibility: filter amounts that would mint 0 shares at current rate,
 
 ### No admin access to pool or reserve
 
-There is no function that lets the admin withdraw from `totalPooledRnbw`. Pool RNBW is only withdrawable by stakers burning shares. Cashback reserve is consumable via signed allocations or reclaimable via `defundCashbackReserve()`. Staking reserve is consumable via `stakeForWithSignature` or reclaimable via `defundStakingReserve()`. `emergencyWithdraw` is restricted to excess RNBW above all three (`totalPooledRnbw + cashbackReserve + stakingReserve`). To wind down the protocol: stop new stakes (disable frontend / revoke signers), let existing users unstake normally, residual sweeps to safe when pool empties. Note: `pause()` is an emergency brake that freezes everything including unstaking -- it is not a wind-down mechanism.
+There is no function that lets the admin withdraw from `totalPooledRnbw` or `pendingFees`. Pool RNBW is only withdrawable by stakers burning shares. Cashback reserve is consumable via signed allocations or reclaimable via `defundCashbackReserve()`. Staking reserve is consumable via `stakeForWithSignature` or reclaimable via `defundStakingReserve()`. `emergencyWithdraw` is restricted to excess RNBW above all four buckets (`totalPooledRnbw + cashbackReserve + stakingReserve + pendingFees`). To wind down the protocol: stop new stakes (disable frontend / revoke signers), let existing users unstake normally, residual sweeps to safe when pool empties (including any undistributed `pendingFees`). Note: `pause()` is an emergency brake that freezes everything including unstaking -- it is not a wind-down mechanism.
 
 ## Future: Liquid Staking Token (xRNBW)
 

@@ -189,7 +189,8 @@ contract RNBWStakingInvariant is StdInvariant, Test {
     }
 
     function invariant_BalanceCoversAccounting() public view {
-        uint256 tracked = staking.totalPooledRnbw() + staking.cashbackReserve() + staking.stakingReserve();
+        uint256 tracked =
+            staking.totalPooledRnbw() + staking.cashbackReserve() + staking.stakingReserve() + staking.pendingFees();
         uint256 balance = token.balanceOf(address(staking));
         assertGe(balance, tracked);
     }

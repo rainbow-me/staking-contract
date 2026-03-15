@@ -36,7 +36,7 @@ interface IRNBWStaking {
     /// @param user The unstaker's address
     /// @param sharesBurned The number of shares burned
     /// @param rnbwValue The gross RNBW value of the burned shares
-    /// @param exitFee The exit fee deducted (stays in pool)
+    /// @param exitFee The exit fee deducted (goes to pendingFees buffer)
     /// @param netReceived The net RNBW transferred to the user
     event Unstaked(address indexed user, uint256 sharesBurned, uint256 rnbwValue, uint256 exitFee, uint256 netReceived);
 
@@ -115,6 +115,11 @@ interface IRNBWStaking {
     /// @notice Emitted when residual dead-share dust is swept to the safe on pool empty
     /// @param amount The residual RNBW swept
     event ResidualSwept(uint256 amount);
+
+    /// @notice Emitted when pending exit fees are distributed into the staking pool
+    /// @param amount The amount of RNBW distributed
+    /// @param newTotalPooledRnbw The total pool after distribution
+    event PendingFeesDistributed(uint256 amount, uint256 newTotalPooledRnbw);
 
     /// @notice Emitted when tokens are withdrawn via emergencyWithdraw
     /// @param token The token address withdrawn
@@ -243,6 +248,12 @@ interface IRNBWStaking {
         uint256 expiry,
         bytes calldata signature
     ) external;
+
+    /// @notice Distribute pending exit fees into the staking pool.
+    ///         Callable by anyone. No-ops if cooldown hasn't passed or no fees pending.
+    ///         Deliberately not paused-gated: fees already earned by stakers should
+    ///         remain distributable during a pause (no user risk, only benefits holders).
+    function distributePendingFees() external;
 
     /// @notice Burn shares to unstake RNBW. An exit fee is deducted and stays in the pool.
     /// @param sharesToBurn The number of shares to burn
