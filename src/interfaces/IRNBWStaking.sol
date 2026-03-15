@@ -401,10 +401,12 @@ interface IRNBWStaking {
     /// @notice Unpause the contract
     function unpause() external;
 
-    /// @notice Withdraw tokens from the contract. For RNBW, only excess above
-    ///         totalPooledRnbw + cashbackReserve + stakingReserve can be withdrawn.
+    /// @notice Withdraw tokens from the contract. For RNBW, the transfer is capped
+    ///         at the excess above totalPooledRnbw + cashbackReserve + stakingReserve + pendingFees.
+    ///         The actual withdrawn amount may be less than requested; check EmergencyWithdrawn event.
+    ///         For non-RNBW tokens, amount passes through uncapped.
     /// @param token The token address to withdraw
-    /// @param amount The amount to withdraw
+    /// @param amount The requested amount to withdraw (capped at excess for RNBW)
     function emergencyWithdraw(address token, uint256 amount) external;
 
     /// @notice Update the exit fee in basis points
