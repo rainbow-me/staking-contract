@@ -36,7 +36,7 @@ interface IRNBWStaking {
     /// @param user The unstaker's address
     /// @param sharesBurned The number of shares burned
     /// @param rnbwValue The gross RNBW value of the burned shares
-    /// @param exitFee The exit fee deducted (stays in pool)
+    /// @param exitFee The exit fee deducted (goes to pendingFees buffer)
     /// @param netReceived The net RNBW transferred to the user
     event Unstaked(address indexed user, uint256 sharesBurned, uint256 rnbwValue, uint256 exitFee, uint256 netReceived);
 
