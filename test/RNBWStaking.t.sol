@@ -546,6 +546,21 @@ contract RNBWStakingTest is Test {
         assertEq(rnbwToken.balanceOf(admin), 50 ether);
     }
 
+    function test_EmergencyWithdrawCapsAtExcess() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        rnbwToken.mint(address(staking), 30 ether);
+
+        uint256 adminBefore = rnbwToken.balanceOf(admin);
+        vm.prank(admin);
+        staking.emergencyWithdraw(address(rnbwToken), 100 ether);
+
+        assertEq(rnbwToken.balanceOf(admin) - adminBefore, 30 ether);
+    }
+
     function test_EmergencyWithdrawRevertInsufficientExcess() public {
         vm.startPrank(alice);
         rnbwToken.approve(address(staking), 100 ether);
