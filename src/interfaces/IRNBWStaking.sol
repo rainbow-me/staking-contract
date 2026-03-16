@@ -255,7 +255,7 @@ interface IRNBWStaking {
         bytes calldata signature
     ) external;
 
-    /// @notice Burn shares to unstake RNBW. An exit fee is deducted and stays in the pool.
+    /// @notice Burn shares to unstake RNBW. An exit fee is deducted and dripped into the pool over dripDuration.
     /// @param sharesToBurn The number of shares to burn
     /// @return netAmount The net RNBW transferred to the user after exit fee
     function unstake(uint256 sharesToBurn) external returns (uint256 netAmount);
