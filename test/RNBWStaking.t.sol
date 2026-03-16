@@ -12,7 +12,7 @@ contract RNBWStakingHarness is RNBWStaking {
         RNBWStaking(_rnbwToken, _safe, _initialSigner)
     {}
 
-    function exposed_syncPool() external {
+    function exposedSyncPool() external {
         _syncPool();
     }
 }
@@ -1762,13 +1762,13 @@ contract RNBWStakingTest is Test {
         assertGt(totalFees, 0);
 
         vm.warp(block.timestamp + 3.5 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         uint256 halfDripped = totalFees - staking.undistributedFees();
         assertApproxEqRel(halfDripped, totalFees / 2, 0.01e18);
 
         vm.warp(block.timestamp + 3.5 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         assertEq(staking.undistributedFees(), 0);
     }
@@ -1791,7 +1791,7 @@ contract RNBWStakingTest is Test {
         uint256 fees = staking.undistributedFees();
 
         vm.warp(block.timestamp + 7 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         assertEq(staking.undistributedFees(), 0);
     }
@@ -1826,7 +1826,7 @@ contract RNBWStakingTest is Test {
         assertGt(fees2, 0);
 
         vm.warp(block.timestamp + 7 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         assertEq(staking.undistributedFees(), 0);
     }
@@ -1875,13 +1875,13 @@ contract RNBWStakingTest is Test {
         staking.unstakeAll();
 
         vm.warp(block.timestamp + 7 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         uint256 poolAfterFirst = staking.totalPooledRnbw();
         uint256 feesAfterFirst = staking.undistributedFees();
 
-        staking.exposed_syncPool();
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
+        staking.exposedSyncPool();
 
         assertEq(staking.totalPooledRnbw(), poolAfterFirst);
         assertEq(staking.undistributedFees(), feesAfterFirst);
@@ -1950,7 +1950,7 @@ contract RNBWStakingTest is Test {
 
         vm.expectEmit(false, false, false, false);
         emit IRNBWStaking.ExchangeRateUpdated(0, 0);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
     }
 
     function test_DripNoFeesNoEffect() public {
@@ -1962,7 +1962,7 @@ contract RNBWStakingTest is Test {
         uint256 rateBefore = staking.getExchangeRate();
 
         vm.warp(block.timestamp + 30 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         assertEq(staking.getExchangeRate(), rateBefore);
         assertEq(staking.undistributedFees(), 0);
@@ -1985,7 +1985,7 @@ contract RNBWStakingTest is Test {
         (uint256 bobAfterInstant,,,,,,,) = staking.getPosition(bob);
 
         vm.warp(block.timestamp + 7 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         (uint256 bobAfterDrip,,,,,,,) = staking.getPosition(bob);
 

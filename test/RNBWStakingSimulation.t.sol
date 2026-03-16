@@ -2,7 +2,6 @@
 pragma solidity 0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
-import {RNBWStaking} from "../src/RNBWStaking.sol";
 import {IRNBWStaking} from "../src/interfaces/IRNBWStaking.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
@@ -176,7 +175,7 @@ contract RNBWStakingSimulation is Test {
         staking.unstake(50_000 ether);
 
         vm.warp(block.timestamp + 7 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         (uint256 aliceAfter,,,,,,,) = staking.getPosition(alice);
         console.log("Alice value after Bob unstakes:", aliceAfter / 1e18);
@@ -321,7 +320,7 @@ contract RNBWStakingSimulation is Test {
         staking.unstake(bobShares);
 
         vm.warp(block.timestamp + 7 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         uint256 expiry = block.timestamp + 60;
         bytes32 structHash =
@@ -463,7 +462,7 @@ contract RNBWStakingSimulation is Test {
         console.log("Charlie unstaked all (10% fee drips over 7 days)");
 
         vm.warp(block.timestamp + 7 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         uint256 rateAfter = staking.getExchangeRate();
         console.log("Exchange rate before:", rateBefore);
@@ -582,7 +581,7 @@ contract RNBWStakingSimulation is Test {
         console.log("PHASE 3: Bob unstakes all (exit fee drips over 7 days)");
 
         vm.warp(block.timestamp + 7 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         vm.startPrank(alice);
         staking.stake(10_000 ether);
@@ -596,7 +595,7 @@ contract RNBWStakingSimulation is Test {
         console.log("PHASE 5: Alice unstakes half her position");
 
         vm.warp(block.timestamp + 7 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         (
             uint256 currentValue,,,,
@@ -686,7 +685,7 @@ contract RNBWStakingSimulation is Test {
         staking.unstake(halfShares);
 
         vm.warp(block.timestamp + 7 days);
-        staking.exposed_syncPool();
+        staking.exposedSyncPool();
 
         uint256 rateAfter = staking.getExchangeRate();
         console.log("");
