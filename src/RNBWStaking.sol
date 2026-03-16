@@ -485,8 +485,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             undistributedFees = 0;
             emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
 
-        // 4. Mid-drip — distribute proportional amount based on elapsed time
-        //    earned = elapsed * rewardRate (linear: constant RNBW per second)
+            // 4. Mid-drip — distribute proportional amount based on elapsed time
+            //    earned = elapsed * rewardRate (linear: constant RNBW per second)
         } else if (block.timestamp > lastSyncTime) {
             uint256 earned = (block.timestamp - lastSyncTime) * rewardRate;
             if (earned > undistributedFees) earned = undistributedFees;
@@ -514,14 +514,20 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @dev Returns totalPooledRnbw including any pending drip that hasn't been settled yet.
     ///      Used by view functions to show the effective exchange rate without mutating state.
     function _effectivePooledRnbw() internal view returns (uint256) {
+        // 1. No stakers or no pending fees — raw total is already accurate
         if (totalShares == 0 || undistributedFees == 0) return totalPooledRnbw;
 
+        // 2. Drip window has fully elapsed — include all remaining fees
+        //    (avoids dust from integer division in rewardRate)
         if (block.timestamp >= dripEndTime) {
             return totalPooledRnbw + undistributedFees;
         }
 
+        // 3. No time has passed since last sync — nothing new to simulate
         if (block.timestamp <= lastSyncTime) return totalPooledRnbw;
 
+        // 4. Mid-drip — simulate proportional amount based on elapsed time
+        //    earned = elapsed * rewardRate (linear: constant RNBW per second)
         uint256 earned = (block.timestamp - lastSyncTime) * rewardRate;
         if (earned > undistributedFees) earned = undistributedFees;
 
