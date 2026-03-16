@@ -36,7 +36,7 @@ interface IRNBWStaking {
     /// @param user The unstaker's address
     /// @param sharesBurned The number of shares burned
     /// @param rnbwValue The gross RNBW value of the burned shares
-    /// @param exitFee The exit fee deducted (stays in pool)
+    /// @param exitFee The exit fee deducted (routed to drip pipeline for gradual distribution)
     /// @param netReceived The net RNBW transferred to the user
     event Unstaked(address indexed user, uint256 sharesBurned, uint256 rnbwValue, uint256 exitFee, uint256 netReceived);
 
@@ -54,8 +54,8 @@ interface IRNBWStaking {
     /// @param signer The signer's address
     event SignerRemoved(address indexed signer);
 
-    /// @notice Emitted after any action that changes the exchange rate
-    /// @param totalPooledRnbw The total RNBW in the staking pool
+    /// @notice Emitted when exit fees drip into the pool, changing the exchange rate
+    /// @param totalPooledRnbw The total RNBW in the staking pool after drip
     /// @param totalShares The total shares outstanding
     event ExchangeRateUpdated(uint256 totalPooledRnbw, uint256 totalShares);
 
@@ -72,6 +72,11 @@ interface IRNBWStaking {
     /// @notice Emitted when partial unstake permission is toggled
     /// @param allowed Whether partial unstake is now allowed
     event PartialUnstakeToggled(bool allowed);
+
+    /// @notice Emitted when the drip duration is updated
+    /// @param oldDripDuration The previous drip duration in seconds
+    /// @param newDripDuration The new drip duration in seconds
+    event DripDurationUpdated(uint256 indexed oldDripDuration, uint256 indexed newDripDuration);
 
     /// @notice Emitted when the admin deposits RNBW to fund cashback rewards
     /// @param from The depositor's address (must be safe)
@@ -214,6 +219,12 @@ interface IRNBWStaking {
 
     /// @notice Thrown when stakeFor is called with a forbidden recipient (contract itself or dead address)
     error InvalidRecipient();
+
+    /// @notice Thrown when the new drip duration is below MIN_DRIP_DURATION
+    error DripDurationTooLow();
+
+    /// @notice Thrown when the new drip duration exceeds MAX_DRIP_DURATION
+    error DripDurationTooHigh();
 
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
@@ -372,7 +383,7 @@ interface IRNBWStaking {
     function unpause() external;
 
     /// @notice Withdraw tokens from the contract. For RNBW, only excess above
-    ///         totalPooledRnbw + cashbackReserve + stakingReserve can be withdrawn.
+    ///         totalPooledRnbw + cashbackReserve + stakingReserve + undistributedFees can be withdrawn.
     /// @param token The token address to withdraw
     /// @param amount The amount to withdraw
     function emergencyWithdraw(address token, uint256 amount) external;
@@ -414,4 +425,8 @@ interface IRNBWStaking {
     /// @notice Toggle whether partial unstake is allowed (default: false)
     /// @param allowed Whether to allow partial unstake
     function setAllowPartialUnstake(bool allowed) external;
+
+    /// @notice Update the drip duration for exit fee distribution
+    /// @param newDripDuration The new drip duration in seconds (must be between MIN_DRIP_DURATION and MAX_DRIP_DURATION)
+    function setDripDuration(uint256 newDripDuration) external;
 }
