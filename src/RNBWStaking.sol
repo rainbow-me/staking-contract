@@ -483,6 +483,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (block.timestamp >= dripEndTime) {
             totalPooledRnbw += undistributedFees;
             undistributedFees = 0;
+            rewardRate = 0;
+            dripEndTime = 0;
             emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
 
             // 4. Mid-drip — distribute proportional amount based on elapsed time
@@ -504,6 +506,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @dev Routes exit fees into the drip pipeline. Combines any remaining
     ///      undistributed fees with the new amount and restarts the drip over dripDuration.
     ///      Must be called after _syncPool() so undistributedFees reflects settled state.
+    ///      Note: when undistributedFees < dripDuration, rewardRate rounds to 0 via integer
+    ///      division. In that case the mid-drip path distributes nothing and fees flush as a
+    ///      cliff when block.timestamp >= dripEndTime. This is acceptable for dust-sized fees.
     function _addFees(uint256 amount) internal {
         if (amount == 0) return;
         undistributedFees += amount;
