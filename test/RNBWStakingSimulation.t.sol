@@ -7,6 +7,7 @@ import {IRNBWStaking} from "../src/interfaces/IRNBWStaking.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {RNBWStakingHarness} from "./RNBWStaking.t.sol";
 
 /**
  * @title RNBWStakingSimulation
@@ -14,7 +15,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  * @dev Run with: forge test --match-contract RNBWStakingSimulation -vvv
  */
 contract RNBWStakingSimulation is Test {
-    RNBWStaking public staking;
+    RNBWStakingHarness public staking;
     MockERC20 public rnbwToken;
 
     address public admin;
@@ -34,7 +35,7 @@ contract RNBWStakingSimulation is Test {
         rnbwToken = new MockERC20("Rainbow Token", "RNBW", 18);
 
         vm.prank(admin);
-        staking = new RNBWStaking(address(rnbwToken), admin, signer);
+        staking = new RNBWStakingHarness(address(rnbwToken), admin, signer);
 
         rnbwToken.mint(alice, 100_000 ether);
         rnbwToken.mint(bob, 100_000 ether);
@@ -173,6 +174,9 @@ contract RNBWStakingSimulation is Test {
         console.log("Bob unstakes all 50,000 shares...");
         vm.prank(bob);
         staking.unstake(50_000 ether);
+
+        vm.warp(block.timestamp + 7 days);
+        staking.exposed_syncPool();
 
         (uint256 aliceAfter,,,,,,,) = staking.getPosition(alice);
         console.log("Alice value after Bob unstakes:", aliceAfter / 1e18);
@@ -316,6 +320,9 @@ contract RNBWStakingSimulation is Test {
         vm.prank(bob);
         staking.unstake(bobShares);
 
+        vm.warp(block.timestamp + 7 days);
+        staking.exposed_syncPool();
+
         uint256 expiry = block.timestamp + 60;
         bytes32 structHash =
             keccak256(abi.encode(staking.ALLOCATE_CASHBACK_TYPEHASH(), alice, uint256(1), allocateNonce, expiry));
@@ -453,7 +460,10 @@ contract RNBWStakingSimulation is Test {
         uint256 charlieShares = staking.shares(charlie);
         vm.prank(charlie);
         staking.unstake(charlieShares);
-        console.log("Charlie unstaked all (10% fee stays in pool)");
+        console.log("Charlie unstaked all (10% fee drips over 7 days)");
+
+        vm.warp(block.timestamp + 7 days);
+        staking.exposed_syncPool();
 
         uint256 rateAfter = staking.getExchangeRate();
         console.log("Exchange rate before:", rateBefore);
@@ -569,7 +579,10 @@ contract RNBWStakingSimulation is Test {
         uint256 bobShares = staking.shares(bob);
         vm.prank(bob);
         staking.unstake(bobShares);
-        console.log("PHASE 3: Bob unstakes all (exit fee boosts Alice)");
+        console.log("PHASE 3: Bob unstakes all (exit fee drips over 7 days)");
+
+        vm.warp(block.timestamp + 7 days);
+        staking.exposed_syncPool();
 
         vm.startPrank(alice);
         staking.stake(10_000 ether);
@@ -581,6 +594,9 @@ contract RNBWStakingSimulation is Test {
         vm.prank(alice);
         staking.unstake(halfShares);
         console.log("PHASE 5: Alice unstakes half her position");
+
+        vm.warp(block.timestamp + 7 days);
+        staking.exposed_syncPool();
 
         (
             uint256 currentValue,,,,
@@ -665,10 +681,12 @@ contract RNBWStakingSimulation is Test {
             console.log("Bob value before:   ", bv / 1e18);
         }
 
-        // Alice does a partial unstake (burns half her shares)
         uint256 halfShares = staking.shares(alice) / 2;
         vm.prank(alice);
         staking.unstake(halfShares);
+
+        vm.warp(block.timestamp + 7 days);
+        staking.exposed_syncPool();
 
         uint256 rateAfter = staking.getExchangeRate();
         console.log("");

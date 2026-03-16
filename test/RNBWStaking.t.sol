@@ -7,8 +7,18 @@ import {IRNBWStaking} from "../src/interfaces/IRNBWStaking.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
+contract RNBWStakingHarness is RNBWStaking {
+    constructor(address _rnbwToken, address _safe, address _initialSigner)
+        RNBWStaking(_rnbwToken, _safe, _initialSigner)
+    {}
+
+    function exposed_syncPool() external {
+        _syncPool();
+    }
+}
+
 contract RNBWStakingTest is Test {
-    RNBWStaking public staking;
+    RNBWStakingHarness public staking;
     MockERC20 public rnbwToken;
 
     address public admin = makeAddr("admin");
@@ -24,7 +34,7 @@ contract RNBWStakingTest is Test {
         rnbwToken = new MockERC20("Rainbow Token", "RNBW", 18);
 
         vm.prank(admin);
-        staking = new RNBWStaking(address(rnbwToken), admin, signer);
+        staking = new RNBWStakingHarness(address(rnbwToken), admin, signer);
 
         rnbwToken.mint(alice, INITIAL_BALANCE);
         rnbwToken.mint(bob, INITIAL_BALANCE);
@@ -703,7 +713,7 @@ contract RNBWStakingTest is Test {
 
         uint256 deadShares = staking.MINIMUM_SHARES();
         assertEq(staking.totalShares(), 1 + deadShares);
-        assertGt(staking.totalPooledRnbw(), 0.5 ether);
+        assertGt(staking.totalPooledRnbw() + staking.undistributedFees(), 0.5 ether);
 
         vm.startPrank(bob);
         rnbwToken.approve(address(staking), 1 ether);
@@ -1708,5 +1718,328 @@ contract RNBWStakingTest is Test {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.InsufficientExcess.selector);
         staking.emergencyWithdraw(address(rnbwToken), 1);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          DRIP SYSTEM TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_DripExitFeesNotInstant() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 rateBefore = staking.getExchangeRate();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        assertEq(staking.getExchangeRate(), rateBefore);
+        assertGt(staking.undistributedFees(), 0);
+    }
+
+    function test_DripLinearDistribution() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        uint256 totalFees = staking.undistributedFees();
+        assertGt(totalFees, 0);
+
+        vm.warp(block.timestamp + 3.5 days);
+        staking.exposed_syncPool();
+
+        uint256 halfDripped = totalFees - staking.undistributedFees();
+        assertApproxEqRel(halfDripped, totalFees / 2, 0.01e18);
+
+        vm.warp(block.timestamp + 3.5 days);
+        staking.exposed_syncPool();
+
+        assertLt(staking.undistributedFees(), staking.dripDuration());
+    }
+
+    function test_DripFullDistributionAfter7Days() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 poolBefore = staking.totalPooledRnbw();
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        uint256 fees = staking.undistributedFees();
+
+        vm.warp(block.timestamp + 7 days);
+        staking.exposed_syncPool();
+
+        assertLt(staking.undistributedFees(), staking.dripDuration());
+    }
+
+    function test_DripOverlappingFees() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        rnbwToken.mint(alice, 100 ether);
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        vm.stopPrank();
+
+        uint256 bobHalf = staking.shares(bob) / 2;
+        vm.prank(bob);
+        staking.unstake(bobHalf);
+        uint256 fees1 = staking.undistributedFees();
+
+        vm.warp(block.timestamp + 3 days);
+
+        vm.prank(bob);
+        staking.unstakeAll();
+        uint256 fees2 = staking.undistributedFees();
+
+        assertGt(fees2, 0);
+
+        vm.warp(block.timestamp + 7 days);
+        staking.exposed_syncPool();
+
+        assertLt(staking.undistributedFees(), staking.dripDuration());
+    }
+
+    function test_DripViewFunctionsIncludePending() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 rateBefore = staking.getExchangeRate();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        assertEq(staking.getExchangeRate(), rateBefore);
+
+        vm.warp(block.timestamp + 3.5 days);
+
+        uint256 rateMid = staking.getExchangeRate();
+        assertGt(rateMid, rateBefore);
+
+        vm.warp(block.timestamp + 3.5 days);
+
+        uint256 rateFull = staking.getExchangeRate();
+        assertGt(rateFull, rateMid);
+    }
+
+    function test_DripSyncPoolIdempotent() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        vm.warp(block.timestamp + 7 days);
+        staking.exposed_syncPool();
+
+        uint256 poolAfterFirst = staking.totalPooledRnbw();
+        uint256 feesAfterFirst = staking.undistributedFees();
+
+        staking.exposed_syncPool();
+        staking.exposed_syncPool();
+
+        assertEq(staking.totalPooledRnbw(), poolAfterFirst);
+        assertEq(staking.undistributedFees(), feesAfterFirst);
+    }
+
+    function test_DripResidualSweepIncludesUndistributed() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 safeBefore = rnbwToken.balanceOf(admin);
+
+        vm.prank(alice);
+        staking.unstakeAll();
+
+        assertEq(staking.totalShares(), 0);
+        assertEq(staking.totalPooledRnbw(), 0);
+        assertEq(staking.undistributedFees(), 0);
+        assertEq(staking.rewardRate(), 0);
+        assertEq(staking.dripEndTime(), 0);
+        assertGt(rnbwToken.balanceOf(admin), safeBefore);
+    }
+
+    function test_DripEmergencyWithdrawProtectsUndistributed() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        assertGt(staking.undistributedFees(), 0);
+
+        rnbwToken.mint(address(staking), 10 ether);
+
+        vm.prank(admin);
+        staking.emergencyWithdraw(address(rnbwToken), 10 ether);
+
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.InsufficientExcess.selector);
+        staking.emergencyWithdraw(address(rnbwToken), 1);
+    }
+
+    function test_DripExchangeRateUpdatedEvent() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        vm.warp(block.timestamp + 7 days);
+
+        vm.expectEmit(false, false, false, false);
+        emit IRNBWStaking.ExchangeRateUpdated(0, 0);
+        staking.exposed_syncPool();
+    }
+
+    function test_DripNoFeesNoEffect() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 rateBefore = staking.getExchangeRate();
+
+        vm.warp(block.timestamp + 30 days);
+        staking.exposed_syncPool();
+
+        assertEq(staking.getExchangeRate(), rateBefore);
+        assertEq(staking.undistributedFees(), 0);
+    }
+
+    function test_DripPreventsSelfAbsorption() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 10 ether);
+        staking.stake(10 ether);
+        vm.stopPrank();
+
+        vm.prank(alice);
+        staking.unstakeAll();
+
+        (uint256 bobAfterInstant,,,,,,,) = staking.getPosition(bob);
+
+        vm.warp(block.timestamp + 7 days);
+        staking.exposed_syncPool();
+
+        (uint256 bobAfterDrip,,,,,,,) = staking.getPosition(bob);
+
+        assertGt(bobAfterDrip, bobAfterInstant);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                      SET DRIP DURATION TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_SetDripDuration() public {
+        vm.prank(admin);
+        staking.setDripDuration(14 days);
+        assertEq(staking.dripDuration(), 14 days);
+    }
+
+    function test_SetDripDurationEmitsEvent() public {
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, false);
+        emit IRNBWStaking.DripDurationUpdated(7 days, 14 days);
+        staking.setDripDuration(14 days);
+    }
+
+    function test_SetDripDurationRevertUnauthorized() public {
+        vm.prank(alice);
+        vm.expectRevert(IRNBWStaking.Unauthorized.selector);
+        staking.setDripDuration(14 days);
+    }
+
+    function test_SetDripDurationRevertTooLow() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.DripDurationTooLow.selector);
+        staking.setDripDuration(6 days);
+    }
+
+    function test_SetDripDurationRevertTooHigh() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.DripDurationTooHigh.selector);
+        staking.setDripDuration(61 days);
+    }
+
+    function test_SetDripDurationRevertNoChange() public {
+        vm.prank(admin);
+        vm.expectRevert(IRNBWStaking.NoChange.selector);
+        staking.setDripDuration(7 days);
+    }
+
+    function test_SetDripDurationBoundaries() public {
+        vm.startPrank(admin);
+        staking.setDripDuration(staking.MAX_DRIP_DURATION());
+        assertEq(staking.dripDuration(), 60 days);
+
+        staking.setDripDuration(staking.MIN_DRIP_DURATION());
+        assertEq(staking.dripDuration(), 7 days);
+        vm.stopPrank();
     }
 }

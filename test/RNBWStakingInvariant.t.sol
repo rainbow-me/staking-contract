@@ -189,7 +189,8 @@ contract RNBWStakingInvariant is StdInvariant, Test {
     }
 
     function invariant_BalanceCoversAccounting() public view {
-        uint256 tracked = staking.totalPooledRnbw() + staking.cashbackReserve() + staking.stakingReserve();
+        uint256 tracked = staking.totalPooledRnbw() + staking.cashbackReserve() + staking.stakingReserve()
+            + staking.undistributedFees();
         uint256 balance = token.balanceOf(address(staking));
         assertGe(balance, tracked);
     }
@@ -197,6 +198,7 @@ contract RNBWStakingInvariant is StdInvariant, Test {
     function invariant_ZeroSharesImpliesZeroPooled() public view {
         if (staking.totalShares() == 0) {
             assertEq(staking.totalPooledRnbw(), 0);
+            assertEq(staking.undistributedFees(), 0);
             assertEq(staking.shares(staking.DEAD_ADDRESS()), 0);
         }
     }
