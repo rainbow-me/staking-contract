@@ -1770,7 +1770,7 @@ contract RNBWStakingTest is Test {
         vm.warp(block.timestamp + 3.5 days);
         staking.exposed_syncPool();
 
-        assertLt(staking.undistributedFees(), staking.dripDuration());
+        assertEq(staking.undistributedFees(), 0);
     }
 
     function test_DripFullDistributionAfter7Days() public {
@@ -1793,7 +1793,7 @@ contract RNBWStakingTest is Test {
         vm.warp(block.timestamp + 7 days);
         staking.exposed_syncPool();
 
-        assertLt(staking.undistributedFees(), staking.dripDuration());
+        assertEq(staking.undistributedFees(), 0);
     }
 
     function test_DripOverlappingFees() public {
@@ -1828,7 +1828,7 @@ contract RNBWStakingTest is Test {
         vm.warp(block.timestamp + 7 days);
         staking.exposed_syncPool();
 
-        assertLt(staking.undistributedFees(), staking.dripDuration());
+        assertEq(staking.undistributedFees(), 0);
     }
 
     function test_DripViewFunctionsIncludePending() public {

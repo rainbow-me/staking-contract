@@ -466,15 +466,29 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @dev Settles any pending fee drip into totalPooledRnbw.
     ///      Called before every state-changing operation to ensure pool totals are current.
     function _syncPool() internal {
+        // 1. No stakers — nothing to distribute to, just advance the clock
         if (totalShares == 0) {
             lastSyncTime = block.timestamp;
             return;
         }
 
-        uint256 applicableTime = block.timestamp < dripEndTime ? block.timestamp : dripEndTime;
-        if (applicableTime > lastSyncTime) {
-            uint256 elapsed = applicableTime - lastSyncTime;
-            uint256 earned = elapsed * rewardRate;
+        // 2. No pending fees — nothing to drip, just advance the clock
+        if (undistributedFees == 0) {
+            lastSyncTime = block.timestamp;
+            return;
+        }
+
+        // 3. Drip window has fully elapsed — flush all remaining fees into the pool
+        //    (avoids dust from integer division in rewardRate)
+        if (block.timestamp >= dripEndTime) {
+            totalPooledRnbw += undistributedFees;
+            undistributedFees = 0;
+            emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
+
+        // 4. Mid-drip — distribute proportional amount based on elapsed time
+        //    earned = elapsed * rewardRate (linear: constant RNBW per second)
+        } else if (block.timestamp > lastSyncTime) {
+            uint256 earned = (block.timestamp - lastSyncTime) * rewardRate;
             if (earned > undistributedFees) earned = undistributedFees;
             if (earned > 0) {
                 totalPooledRnbw += earned;
@@ -482,6 +496,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
                 emit ExchangeRateUpdated(totalPooledRnbw, totalShares);
             }
         }
+
+        // 5. Advance the sync checkpoint so the next call only processes new elapsed time
         lastSyncTime = block.timestamp;
     }
 
@@ -500,11 +516,13 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function _effectivePooledRnbw() internal view returns (uint256) {
         if (totalShares == 0 || undistributedFees == 0) return totalPooledRnbw;
 
-        uint256 applicableTime = block.timestamp < dripEndTime ? block.timestamp : dripEndTime;
-        if (applicableTime <= lastSyncTime) return totalPooledRnbw;
+        if (block.timestamp >= dripEndTime) {
+            return totalPooledRnbw + undistributedFees;
+        }
 
-        uint256 elapsed = applicableTime - lastSyncTime;
-        uint256 earned = elapsed * rewardRate;
+        if (block.timestamp <= lastSyncTime) return totalPooledRnbw;
+
+        uint256 earned = (block.timestamp - lastSyncTime) * rewardRate;
         if (earned > undistributedFees) earned = undistributedFees;
 
         return totalPooledRnbw + earned;
