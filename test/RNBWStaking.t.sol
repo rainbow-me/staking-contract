@@ -1784,11 +1784,8 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         vm.stopPrank();
 
-        uint256 poolBefore = staking.totalPooledRnbw();
         vm.prank(bob);
         staking.unstakeAll();
-
-        uint256 fees = staking.undistributedFees();
 
         vm.warp(block.timestamp + 7 days);
         staking.exposedSyncPool();
@@ -1815,15 +1812,12 @@ contract RNBWStakingTest is Test {
         uint256 bobHalf = staking.shares(bob) / 2;
         vm.prank(bob);
         staking.unstake(bobHalf);
-        uint256 fees1 = staking.undistributedFees();
-
         vm.warp(block.timestamp + 3 days);
 
         vm.prank(bob);
         staking.unstakeAll();
-        uint256 fees2 = staking.undistributedFees();
 
-        assertGt(fees2, 0);
+        assertGt(staking.undistributedFees(), 0);
 
         vm.warp(block.timestamp + 7 days);
         staking.exposedSyncPool();
@@ -2031,6 +2025,49 @@ contract RNBWStakingTest is Test {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.NoChange.selector);
         staking.setDripDuration(7 days);
+    }
+
+    function test_SetDripDurationMidDrip() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        uint256 totalFees = staking.undistributedFees();
+        uint256 poolAtUnstake = staking.totalPooledRnbw();
+        assertGt(totalFees, 0);
+
+        vm.warp(block.timestamp + 3 days);
+        uint256 poolBefore = staking.totalPooledRnbw();
+
+        vm.prank(admin);
+        staking.setDripDuration(14 days);
+
+        uint256 poolAfterSync = staking.totalPooledRnbw();
+        uint256 remainingFees = staking.undistributedFees();
+
+        assertEq(poolAfterSync + remainingFees, poolAtUnstake + totalFees);
+        assertGt(poolAfterSync, poolBefore);
+        assertGt(remainingFees, 0);
+        assertEq(staking.rewardRate(), remainingFees / 14 days);
+        assertEq(staking.dripEndTime(), block.timestamp + 14 days);
+
+        uint256 totalAccounted = poolAfterSync + remainingFees;
+        vm.warp(block.timestamp + 14 days);
+        staking.exposedSyncPool();
+
+        assertEq(staking.undistributedFees(), 0);
+        assertEq(staking.totalPooledRnbw(), totalAccounted);
+        assertEq(staking.rewardRate(), 0);
+        assertEq(staking.dripEndTime(), 0);
     }
 
     function test_SetDripDurationBoundaries() public {
