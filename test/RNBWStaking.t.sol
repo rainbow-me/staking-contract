@@ -700,7 +700,7 @@ contract RNBWStakingTest is Test {
         assertApproxEqAbs(received, 80 ether, staking.MINIMUM_SHARES());
     }
 
-    function test_ShareInflationAttackMitigatedByDeadShares() public {
+    function test_ShareInflationAttackMitigatedByDustGuard() public {
         rnbwToken.mint(alice, 100_000 ether);
 
         vm.startPrank(alice);
@@ -708,19 +708,11 @@ contract RNBWStakingTest is Test {
         staking.stake(7 ether);
 
         uint256 aliceShares = staking.shares(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IRNBWStaking.DustSharesRemaining.selector, alice, 1)
+        );
         staking.unstake(aliceShares - 1);
         vm.stopPrank();
-
-        uint256 deadShares = staking.MINIMUM_SHARES();
-        assertEq(staking.totalShares(), 1 + deadShares);
-        assertGt(staking.totalPooledRnbw() + staking.undistributedFees(), 0.5 ether);
-
-        vm.startPrank(bob);
-        rnbwToken.approve(address(staking), 1 ether);
-        staking.stake(1 ether);
-        vm.stopPrank();
-
-        assertGt(staking.shares(bob), 0);
     }
 
     function test_BatchAllocateCashback() public {
@@ -1458,7 +1450,7 @@ contract RNBWStakingTest is Test {
         vm.stopPrank();
     }
 
-    function test_DustUnstakeBurnsSharesWithoutTransfer() public {
+    function test_DustUnstakeRevertsBelowMinimumShares() public {
         vm.startPrank(alice);
         rnbwToken.approve(address(staking), 100 ether);
         staking.stake(100 ether);
@@ -1472,18 +1464,15 @@ contract RNBWStakingTest is Test {
 
         uint256 aliceShares = staking.shares(alice);
         vm.startPrank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IRNBWStaking.DustSharesRemaining.selector, alice, 1)
+        );
         staking.unstake(aliceShares - 1);
-
-        uint256 remaining = staking.shares(alice);
-        assertEq(remaining, 1);
-
-        uint256 balBefore = rnbwToken.balanceOf(alice);
-        staking.unstake(1);
-        uint256 balAfter = rnbwToken.balanceOf(alice);
         vm.stopPrank();
 
+        vm.prank(alice);
+        staking.unstakeAll();
         assertEq(staking.shares(alice), 0);
-        assertGe(balAfter, balBefore);
     }
 
     // ───────────────────────────────────────────────────────────
