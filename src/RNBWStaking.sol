@@ -633,6 +633,10 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (!allowPartialUnstake && sharesToBurn != shares[user]) {
             revert PartialUnstakeDisabled(user, sharesToBurn, shares[user]);
         }
+        uint256 remainingShares = shares[user] - sharesToBurn;
+        if (remainingShares > 0 && remainingShares < MINIMUM_SHARES) {
+            revert DustSharesRemaining(user, remainingShares);
+        }
 
         // 2. Calculate RNBW value of shares at current exchange rate
         //    Formula: rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares
@@ -665,7 +669,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         //    Sweep both totalPooledRnbw and undistributedFees to safe so the invariant
         //    `totalShares == 0 ⟹ totalPooledRnbw == 0 ∧ undistributedFees == 0` holds.
         uint256 residual;
-        if (totalShares == MINIMUM_SHARES) {
+        if (totalShares <= MINIMUM_SHARES) {
             residual = totalPooledRnbw + undistributedFees;
             totalPooledRnbw = 0;
             undistributedFees = 0;
