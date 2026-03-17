@@ -708,9 +708,7 @@ contract RNBWStakingTest is Test {
         staking.stake(7 ether);
 
         uint256 aliceShares = staking.shares(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(IRNBWStaking.DustSharesRemaining.selector, alice, 1)
-        );
+        vm.expectRevert(abi.encodeWithSelector(IRNBWStaking.DustSharesRemaining.selector, alice, 1));
         staking.unstake(aliceShares - 1);
         vm.stopPrank();
     }
@@ -1464,9 +1462,7 @@ contract RNBWStakingTest is Test {
 
         uint256 aliceShares = staking.shares(alice);
         vm.startPrank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(IRNBWStaking.DustSharesRemaining.selector, alice, 1)
-        );
+        vm.expectRevert(abi.encodeWithSelector(IRNBWStaking.DustSharesRemaining.selector, alice, 1));
         staking.unstake(aliceShares - 1);
         vm.stopPrank();
 
