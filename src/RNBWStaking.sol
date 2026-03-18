@@ -286,7 +286,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @inheritdoc IRNBWStaking
-    function previewStake(uint256 amount) external view returns (uint256 sharesToMint) {
+    function previewStake(address user, uint256 amount) external view returns (uint256 sharesToMint) {
+        if (shares[user] == 0 && amount < minStakeAmount) return 0;
         if (totalShares == 0) {
             if (amount <= MINIMUM_SHARES) return 0;
             sharesToMint = amount - MINIMUM_SHARES;

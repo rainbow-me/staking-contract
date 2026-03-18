@@ -348,9 +348,10 @@ interface IRNBWStaking {
         returns (uint256 rnbwValue, uint256 exitFee, uint256 netReceived);
 
     /// @notice Preview the number of shares that would be minted for a given stake amount
+    /// @param user The address that would stake (used to check minStakeAmount for first-time stakers)
     /// @param amount The RNBW amount to stake
-    /// @return sharesToMint The number of shares that would be minted
-    function previewStake(uint256 amount) external view returns (uint256 sharesToMint);
+    /// @return sharesToMint The number of shares that would be minted (0 if first-time staker below minStakeAmount)
+    function previewStake(address user, uint256 amount) external view returns (uint256 sharesToMint);
 
     /// @notice Checks if a nonce has been used for a given user
     /// @param user The user's address
