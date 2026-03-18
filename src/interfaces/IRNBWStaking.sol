@@ -205,7 +205,7 @@ interface IRNBWStaking {
     /// @notice Thrown when partial unstake is attempted but not allowed
     error PartialUnstakeDisabled(address user, uint256 sharesToBurn, uint256 totalUserShares);
 
-    /// @notice Thrown when partial unstake would leave fewer than MINIMUM_SHARES in the user's balance
+    /// @notice Thrown when partial unstake would leave fewer than MIN_SHARES_THRESHOLD in the user's balance
     error DustSharesRemaining(address user, uint256 remainingShares);
 
     /// @notice Thrown when batch array lengths do not match

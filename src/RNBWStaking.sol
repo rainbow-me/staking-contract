@@ -43,6 +43,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public constant MAX_SIGNERS = 3; // Maximum number of trusted signers
     uint256 public constant MAX_BATCH_SIZE = 50;
     uint256 public constant MINIMUM_SHARES = 1000;
+    uint256 public constant MIN_SHARES_THRESHOLD = 1e14;
     address public constant DEAD_ADDRESS = address(0xdead);
     uint256 public constant MIN_DRIP_DURATION = 7 days;
     uint256 public constant MAX_DRIP_DURATION = 60 days;
@@ -634,7 +635,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             revert PartialUnstakeDisabled(user, sharesToBurn, shares[user]);
         }
         uint256 remainingShares = shares[user] - sharesToBurn;
-        if (remainingShares > 0 && remainingShares < MINIMUM_SHARES) {
+        if (remainingShares > 0 && remainingShares < MIN_SHARES_THRESHOLD) {
             revert DustSharesRemaining(user, remainingShares);
         }
 
