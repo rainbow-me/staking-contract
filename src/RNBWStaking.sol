@@ -503,17 +503,37 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         lastSyncTime = block.timestamp;
     }
 
-    /// @dev Routes exit fees into the drip pipeline. Combines any remaining
-    ///      undistributed fees with the new amount and restarts the drip over dripDuration.
+    /// @dev Routes exit fees into the drip pipeline.
     ///      Must be called after _syncPool() so undistributedFees reflects settled state.
-    ///      Note: when undistributedFees < dripDuration, rewardRate rounds to 0 via integer
-    ///      division. In that case the mid-drip path distributes nothing and fees flush as a
-    ///      cliff when block.timestamp >= dripEndTime. This is acceptable for dust-sized fees.
+    ///      rewardRate can only stay flat or increase — never decrease (prevents dust
+    ///      unstake griefing). When undistributedFees < dripDuration, rewardRate rounds
+    ///      to 0 and fees flush as a cliff at dripEndTime.
     function _addFees(uint256 amount) internal {
         if (amount == 0) return;
         undistributedFees += amount;
-        rewardRate = undistributedFees / dripDuration;
-        dripEndTime = block.timestamp + dripDuration;
+
+        // Case 1: No drip is active — start a fresh drip cycle.
+        //         e.g., first unstake after pool was idle, or previous drip fully elapsed.
+        if (block.timestamp >= dripEndTime) {
+            rewardRate = undistributedFees / dripDuration;
+            dripEndTime = block.timestamp + dripDuration;
+            return;
+        }
+
+        // Case 2: A drip is already active — only reset the window if the new rate
+        //         is higher (APY goes up). Otherwise keep the current rate and extend
+        //         time slightly. Prevents dust unstakes from resetting the full window.
+        uint256 proposedRate = undistributedFees / dripDuration;
+
+        if (proposedRate >= rewardRate) {
+            // Large fee added — rate goes up, reset the full drip window.
+            rewardRate = proposedRate;
+            dripEndTime = block.timestamp + dripDuration;
+        } else {
+            // Small fee added — keep current rate, extend window by just enough
+            // time to distribute the remaining fees at the current speed.
+            dripEndTime = block.timestamp + (undistributedFees / rewardRate);
+        }
     }
 
     /// @dev Returns totalPooledRnbw including any pending drip that hasn't been settled yet.
