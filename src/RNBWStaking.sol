@@ -288,16 +288,11 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     /// @inheritdoc IRNBWStaking
     function previewStake(address user, uint256 amount) external view returns (uint256 sharesToMint) {
         if (shares[user] == 0 && amount < minStakeAmount) return 0;
-        if (totalShares == 0) {
-            if (amount <= MINIMUM_SHARES) return 0;
-            sharesToMint = amount - MINIMUM_SHARES;
-        } else {
-            sharesToMint = (amount * totalShares) / _effectivePooledRnbw();
-        }
+        return getSharesForRnbw(amount);
     }
 
     /// @inheritdoc IRNBWStaking
-    function isNonceUsed(address user, uint256 nonce) external view returns (bool) {
+    function isNonceUsed(address user, uint256 nonce) public view returns (bool) {
         return usedNonces[user][nonce];
     }
 
@@ -593,7 +588,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (block.timestamp > expiry) revert SignatureExpired();
 
         // 2. Check nonce hasn't been used (prevents replay attacks)
-        if (usedNonces[user][nonce]) revert NonceAlreadyUsed();
+        if (isNonceUsed(user, nonce)) revert NonceAlreadyUsed();
 
         // 3. Recover signer from EIP-712 typed data hash
         bytes32 digest = _hashTypedDataV4(structHash);
