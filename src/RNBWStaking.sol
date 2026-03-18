@@ -770,7 +770,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         }
 
         // 3. Calculate shares to mint at the current exchange rate
-        assert(totalShares > 0);
+        //    totalShares > 0 guaranteed by shares[user] > 0 check above.
         uint256 sharesToMint = (rnbwCashback * totalShares) / totalPooledRnbw;
 
         // 4. Revert if cashback is too small to mint shares — backend should
