@@ -532,6 +532,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         } else {
             // Small fee added — keep current rate, extend window by just enough
             // time to distribute the remaining fees at the current speed.
+            // Note: integer division may slightly undershoot; _syncPool flushes
+            // all remaining undistributedFees once block.timestamp >= dripEndTime.
             dripEndTime = block.timestamp + (undistributedFees / rewardRate);
         }
     }
