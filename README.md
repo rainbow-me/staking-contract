@@ -131,10 +131,13 @@ This prevents two attack vectors:
 
 #### How it works
 
-1. **Fee enters pipeline** -- when a user unstakes, the full `rnbwValue` is removed from `totalPooledRnbw`. The exit fee is passed to `_addFees()`, which adds it to `undistributedFees` and calculates `rewardRate = undistributedFees / dripDuration`.
-2. **Linear drip** -- `_syncPool()` is called before every state-changing operation. It calculates `earned = elapsed * rewardRate`, moves that amount from `undistributedFees` into `totalPooledRnbw`, and emits `ExchangeRateUpdated`.
+1. **Fee enters pipeline** -- when a user unstakes, the full `rnbwValue` is removed from `totalPooledRnbw`. The exit fee is passed to `_addFees()`, which adds it to `undistributedFees` and sets `rewardRate` and `dripEndTime`.
+2. **Linear drip** -- `_syncPool()` is called before every state-changing operation. It calculates `earned = elapsed * rewardRate`, moves that amount from `undistributedFees` into `totalPooledRnbw`, and emits `ExchangeRateUpdated`. When the full drip window has elapsed, all remaining `undistributedFees` are flushed at once (avoiding dust from integer division), and `rewardRate`/`dripEndTime` are zeroed.
 3. **View functions** -- `getExchangeRate()`, `getRnbwForShares()`, `previewUnstake()`, etc. use `_effectivePooledRnbw()` which simulates the pending drip without mutating state, so the frontend always shows the accurate current value.
-4. **Overlapping drips** -- if a second unstake happens mid-drip, `_syncPool()` settles what's owed so far, then `_addFees()` combines the remaining undistributed fees with the new exit fee and restarts the drip window: `rewardRate = (remaining + newFee) / dripDuration`.
+4. **Overlapping drips (rate preservation)** -- if a second unstake happens mid-drip, `_syncPool()` settles what's owed so far, then `_addFees()` applies rate-preservation logic:
+   - **No active drip** (`block.timestamp >= dripEndTime`): start a fresh cycle — `rewardRate = undistributedFees / dripDuration`, new 7-day window.
+   - **Rate goes up** (`proposedRate >= rewardRate`): the new fee is large enough to increase the drip speed — reset the full drip window with the higher rate.
+   - **Rate stays flat** (`proposedRate < rewardRate`): the new fee is small (e.g., dust unstake) — keep the current `rewardRate` and extend `dripEndTime` just enough to distribute the remaining fees at the current speed. This prevents an attacker from repeatedly dust-unstaking to reset the 7-day window and delay fee distribution.
 
 ```
 Day 0: Bob unstakes, 5,000 RNBW exit fee → undistributedFees = 5,000
@@ -144,11 +147,15 @@ Day 3: Next operation triggers _syncPool()
         earned = 3 * 714.3 ≈ 2,143 RNBW moved to pool
         undistributedFees ≈ 2,857
 
-Day 3: Charlie unstakes, 2,000 RNBW exit fee
+Day 3: Charlie unstakes, 2,000 RNBW exit fee (large → rate goes up)
         undistributedFees = 2,857 + 2,000 = 4,857
-        rewardRate = 4,857 / 7 days ≈ 694 RNBW/day (fresh 7-day window)
+        proposedRate = 4,857 / 7 days ≈ 694 ≥ 714? No → keep rate at 714
+        dripEndTime extended to Day 3 + (4,857 / 714) ≈ Day 9.8
 
-Day 10: Drip complete, undistributedFees ≈ 0
+Day 3: (alternatively, if Charlie's fee were larger, e.g. 10,000 RNBW)
+        undistributedFees = 2,857 + 10,000 = 12,857
+        proposedRate = 12,857 / 7 days ≈ 1,837 ≥ 714? Yes → reset window
+        rewardRate = 1,837 RNBW/day, fresh 7-day window from Day 3
 ```
 
 Key invariant: `totalPooledRnbw + undistributedFees` always equals the total RNBW that belongs to stakers.
