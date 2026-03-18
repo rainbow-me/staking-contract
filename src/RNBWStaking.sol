@@ -360,6 +360,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function proposeSafe(address newSafe) external onlySafe {
         if (newSafe == address(0)) revert ZeroAddress();
         if (newSafe == safe) revert NoChange();
+        if (pendingSafe != address(0)) {
+            emit SafeProposalCancelled(safe, pendingSafe);
+        }
         pendingSafe = newSafe;
         emit SafeProposed(safe, newSafe);
     }
