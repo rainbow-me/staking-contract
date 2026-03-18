@@ -15,4 +15,5 @@ docs/
 .env.staging
 .env.production
 .idea
+.zenflow
 lcov.info
