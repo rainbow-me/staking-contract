@@ -286,17 +286,13 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     }
 
     /// @inheritdoc IRNBWStaking
-    function previewStake(uint256 amount) external view returns (uint256 sharesToMint) {
-        if (totalShares == 0) {
-            if (amount <= MINIMUM_SHARES) return 0;
-            sharesToMint = amount - MINIMUM_SHARES;
-        } else {
-            sharesToMint = (amount * totalShares) / _effectivePooledRnbw();
-        }
+    function previewStake(address user, uint256 amount) external view returns (uint256 sharesToMint) {
+        if (shares[user] == 0 && amount < minStakeAmount) return 0;
+        return getSharesForRnbw(amount);
     }
 
     /// @inheritdoc IRNBWStaking
-    function isNonceUsed(address user, uint256 nonce) external view returns (bool) {
+    function isNonceUsed(address user, uint256 nonce) public view returns (bool) {
         return usedNonces[user][nonce];
     }
 
@@ -353,7 +349,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             uint256 balance = RNBW_TOKEN.balanceOf(address(this));
             uint256 reserved = totalPooledRnbw + cashbackReserve + stakingReserve + undistributedFees;
             uint256 excess = balance > reserved ? balance - reserved : 0;
-            if (amount > excess) revert InsufficientExcess();
+            if (excess == 0) revert InsufficientExcess();
+            amount = amount > excess ? excess : amount;
         }
         IERC20(token).safeTransfer(safe, amount);
         emit EmergencyWithdrawn(token, amount);
@@ -363,6 +360,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function proposeSafe(address newSafe) external onlySafe {
         if (newSafe == address(0)) revert ZeroAddress();
         if (newSafe == safe) revert NoChange();
+        if (pendingSafe != address(0)) {
+            emit SafeProposalCancelled(safe, pendingSafe);
+        }
         pendingSafe = newSafe;
         emit SafeProposed(safe, newSafe);
     }
@@ -592,7 +592,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         if (block.timestamp > expiry) revert SignatureExpired();
 
         // 2. Check nonce hasn't been used (prevents replay attacks)
-        if (usedNonces[user][nonce]) revert NonceAlreadyUsed();
+        if (isNonceUsed(user, nonce)) revert NonceAlreadyUsed();
 
         // 3. Recover signer from EIP-712 typed data hash
         bytes32 digest = _hashTypedDataV4(structHash);
@@ -703,6 +703,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
         // 10. Emit events
         emit Unstaked(user, sharesToBurn, rnbwValue, exitFee, netAmount);
+        emit PoolTotalsUpdated(totalPooledRnbw, totalShares);
     }
 
     /// @dev Stakes from the pre-funded staking reserve — no token transfer,
@@ -756,6 +757,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
         // 5. Emit events
         emit Staked(user, amount, sharesToMint, shares[user]);
+        emit PoolTotalsUpdated(totalPooledRnbw, totalShares);
     }
 
     /// @dev Allocates cashback by minting shares directly in one step.
@@ -772,7 +774,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
         }
 
         // 3. Calculate shares to mint at the current exchange rate
-        assert(totalShares > 0);
+        //    totalShares > 0 guaranteed by shares[user] > 0 check above.
         uint256 sharesToMint = (rnbwCashback * totalShares) / totalPooledRnbw;
 
         // 4. Revert if cashback is too small to mint shares — backend should
@@ -793,5 +795,6 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
 
         // 7. Emit events
         emit CashbackAllocated(user, rnbwCashback, sharesToMint);
+        emit PoolTotalsUpdated(totalPooledRnbw, totalShares);
     }
 }

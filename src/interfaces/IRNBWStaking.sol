@@ -59,6 +59,12 @@ interface IRNBWStaking {
     /// @param totalShares The total shares outstanding
     event ExchangeRateUpdated(uint256 totalPooledRnbw, uint256 totalShares);
 
+    /// @notice Emitted after stake, unstake, or cashback allocation — pool totals change but
+    ///         the exchange rate stays ~constant (both sides scale proportionally, modulo rounding dust).
+    /// @param totalPooledRnbw The total RNBW in the staking pool
+    /// @param totalShares The total shares outstanding
+    event PoolTotalsUpdated(uint256 totalPooledRnbw, uint256 totalShares);
+
     /// @notice Emitted when the exit fee is updated
     /// @param oldExitFeeBps The previous exit fee in basis points
     /// @param newExitFeeBps The new exit fee in basis points
@@ -348,9 +354,10 @@ interface IRNBWStaking {
         returns (uint256 rnbwValue, uint256 exitFee, uint256 netReceived);
 
     /// @notice Preview the number of shares that would be minted for a given stake amount
+    /// @param user The address that would stake (used to check minStakeAmount for first-time stakers)
     /// @param amount The RNBW amount to stake
-    /// @return sharesToMint The number of shares that would be minted
-    function previewStake(uint256 amount) external view returns (uint256 sharesToMint);
+    /// @return sharesToMint The number of shares that would be minted (0 if first-time staker below minStakeAmount)
+    function previewStake(address user, uint256 amount) external view returns (uint256 sharesToMint);
 
     /// @notice Checks if a nonce has been used for a given user
     /// @param user The user's address
@@ -415,7 +422,8 @@ interface IRNBWStaking {
     /// @param amount The amount of RNBW to reclaim
     function defundCashbackReserve(uint256 amount) external;
 
-    /// @notice Propose a new safe address (step 1 of 2-step transfer, callable by current safe only)
+    /// @notice Propose a new safe address (step 1 of 2-step transfer, callable by current safe only).
+    ///         If a previous proposal exists, it is implicitly cancelled (emits SafeProposalCancelled).
     /// @param newSafe The proposed new safe address
     function proposeSafe(address newSafe) external;
 
