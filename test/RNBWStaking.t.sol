@@ -922,7 +922,7 @@ contract RNBWStakingTest is Test {
     }
 
     function test_PreviewStake() public {
-        uint256 preview = staking.previewStake(100 ether);
+        uint256 preview = staking.previewStake(alice, 100 ether);
 
         vm.startPrank(alice);
         rnbwToken.approve(address(staking), 100 ether);
@@ -939,7 +939,7 @@ contract RNBWStakingTest is Test {
         staking.unstakeAll();
         vm.stopPrank();
 
-        uint256 preview = staking.previewStake(50 ether);
+        uint256 preview = staking.previewStake(bob, 50 ether);
 
         vm.startPrank(bob);
         rnbwToken.approve(address(staking), 50 ether);
@@ -965,7 +965,7 @@ contract RNBWStakingTest is Test {
     }
 
     function test_PreviewStakeDustOnEmptyPool() public view {
-        uint256 preview = staking.previewStake(500);
+        uint256 preview = staking.previewStake(alice, 500);
         assertEq(preview, 0);
     }
 
@@ -975,7 +975,7 @@ contract RNBWStakingTest is Test {
         staking.stake(100 ether);
         vm.stopPrank();
 
-        uint256 preview = staking.previewStake(50 ether);
+        uint256 preview = staking.previewStake(bob, 50 ether);
 
         vm.startPrank(bob);
         rnbwToken.approve(address(staking), 50 ether);
@@ -983,6 +983,21 @@ contract RNBWStakingTest is Test {
         vm.stopPrank();
 
         assertEq(staking.shares(bob), preview);
+    }
+
+    function test_PreviewStakeReturnZeroForFirstTimerBelowMin() public view {
+        uint256 preview = staking.previewStake(alice, 0.5 ether);
+        assertEq(preview, 0);
+    }
+
+    function test_PreviewStakeReturnsSharesForExistingStakerBelowMin() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        uint256 preview = staking.previewStake(alice, 0.5 ether);
+        assertGt(preview, 0);
     }
 
     function test_GetSharesForRnbwEmptyPool() public view {
