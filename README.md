@@ -43,7 +43,7 @@ Entry points:
 - `stakeFor(recipient, amount)` -- tokens come from `msg.sender`, shares go to `recipient`. Built for third-party integrations like a liquid staking token (xRNBW). Reverts if `recipient` is `address(0)`, `address(this)`, or `DEAD_ADDRESS`.
 - `stakeForWithSignature(recipient, amount, nonce, expiry, signature)` -- signature-gated staking from the pre-funded staking reserve. A trusted signer authorizes the operation off-chain; RNBW comes from `stakingReserve` (funded via `fundStakingReserve()`), shares go to `recipient`, and any address can submit the tx (relayer). Two roles: signer (authorizes off-chain), caller/relayer (pays gas). Nonce is scoped to the recipient address. Same trust model as cashback -- compromised signer can drain the staking reserve by generating valid signatures. Risk is bounded by the reserve balance and the signature expiry window.
 
-Preview: `previewStake(amount)` returns `sharesToMint` (returns 0 for dust amounts).
+Preview: `previewStake(user, amount)` returns `sharesToMint` (returns 0 for dust amounts and for first-time stakers below `minStakeAmount`).
 
 Steps:
 
@@ -213,7 +213,7 @@ cashbackReserve = 4,500, Alice: 50,500 shares
 | Lifetime Staked | `getPosition(user).totalRnbwStaked` |
 | Lifetime Unstaked | `getPosition(user).totalRnbwUnstaked` (net, after exit fee) |
 | Lifetime Exit Fees | `getPosition(user).totalExitFeePaid` |
-| Preview Stake | `previewStake(amount)` → shares to mint |
+| Preview Stake | `previewStake(user, amount)` → shares to mint (0 for first-time stakers below min) |
 | Preview Unstake | `previewUnstake(shares)` → `(rnbwValue, exitFee, netReceived)` |
 
 ---
@@ -425,7 +425,7 @@ Where:
 - Dust unstake handling: when ceil-rounded exit fee consumes 100% of a dust unstake, shares are burned with no transfer (clears dust positions without reverting)
 - 2-step safe transfer: `proposeSafe()` + `acceptSafe()` prevents transfer to wrong address
 - Partial unstake toggle: `allowPartialUnstake` (default: disabled)
-- Preview dust guard: `previewStake()` returns 0 instead of reverting for dust amounts
+- Preview dust guard: `previewStake(user, amount)` returns 0 instead of reverting for dust amounts and for first-time stakers below `minStakeAmount`
 - Recipient guards: `stakeFor` and `stakeForWithSignature` reject `address(0)`, `address(this)`, and `DEAD_ADDRESS` to prevent token locking and dead-share corruption
 - Batch size limit: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve check
 - Rich error context: user-facing errors include address and value params for debugging
