@@ -416,7 +416,7 @@ Where:
 - Dead shares: 1000 shares minted to `0xdead` on first deposit (prevents share inflation / first depositor attack)
 - Cashback reserve: tracked separately from staking pool, protected from `emergencyWithdraw`
 - Staking reserve: tracked separately, protected from `emergencyWithdraw`, reclaimable via `defundStakingReserve()`
-- Emergency withdraw: for RNBW, only excess above `totalPooledRnbw + cashbackReserve + stakingReserve + undistributedFees` can be withdrawn -- the pool, both reserves, and pending drip fees are untouchable. Non-RNBW tokens have no restriction (rescue for accidental sends).
+- Emergency withdraw: for RNBW, the transfer is capped at excess above `totalPooledRnbw + cashbackReserve + stakingReserve + undistributedFees` -- if the requested amount exceeds excess, it is silently capped (check `EmergencyWithdrawn` event for actual amount). The pool, both reserves, and pending drip fees are untouchable. Non-RNBW tokens pass through uncapped (rescue for accidental sends).
 - Min stake floor: `minStakeAmount` cannot be set below 1 RNBW
 - Inflation guard: `ZeroSharesMinted` revert protects depositors from rounding attacks
 - Residual sweep: when only dead shares remain, `totalPooledRnbw` and `undistributedFees` are swept to safe and pool is reset
@@ -542,7 +542,7 @@ Backend responsibility: filter amounts that would mint 0 shares at current rate,
 
 ### No admin access to pool or reserve
 
-There is no function that lets the admin withdraw from `totalPooledRnbw`. Pool RNBW is only withdrawable by stakers burning shares. Cashback reserve is consumable via signed allocations or reclaimable via `defundCashbackReserve()`. Staking reserve is consumable via `stakeForWithSignature` or reclaimable via `defundStakingReserve()`. `emergencyWithdraw` is restricted to excess RNBW above all four tracked pools (`totalPooledRnbw + cashbackReserve + stakingReserve + undistributedFees`). To wind down the protocol: stop new stakes (disable frontend / revoke signers), let existing users unstake normally, residual sweeps to safe when pool empties. Note: `pause()` is an emergency brake that freezes everything including unstaking -- it is not a wind-down mechanism.
+There is no function that lets the admin withdraw from `totalPooledRnbw`. Pool RNBW is only withdrawable by stakers burning shares. Cashback reserve is consumable via signed allocations or reclaimable via `defundCashbackReserve()`. Staking reserve is consumable via `stakeForWithSignature` or reclaimable via `defundStakingReserve()`. `emergencyWithdraw` caps RNBW transfers at excess above all four tracked pools (`totalPooledRnbw + cashbackReserve + stakingReserve + undistributedFees`) -- requested amounts above excess are silently capped. To wind down the protocol: stop new stakes (disable frontend / revoke signers), let existing users unstake normally, residual sweeps to safe when pool empties. Note: `pause()` is an emergency brake that freezes everything including unstaking -- it is not a wind-down mechanism.
 
 ## Future: Liquid Staking Token (xRNBW)
 
