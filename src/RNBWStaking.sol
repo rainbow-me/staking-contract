@@ -349,7 +349,8 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
             uint256 balance = RNBW_TOKEN.balanceOf(address(this));
             uint256 reserved = totalPooledRnbw + cashbackReserve + stakingReserve + undistributedFees;
             uint256 excess = balance > reserved ? balance - reserved : 0;
-            if (amount > excess) revert InsufficientExcess();
+            if (excess == 0) revert InsufficientExcess();
+            amount = amount > excess ? excess : amount;
         }
         IERC20(token).safeTransfer(safe, amount);
         emit EmergencyWithdrawn(token, amount);
@@ -359,6 +360,9 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     function proposeSafe(address newSafe) external onlySafe {
         if (newSafe == address(0)) revert ZeroAddress();
         if (newSafe == safe) revert NoChange();
+        if (pendingSafe != address(0)) {
+            emit SafeProposalCancelled(safe, pendingSafe);
+        }
         pendingSafe = newSafe;
         emit SafeProposed(safe, newSafe);
     }
