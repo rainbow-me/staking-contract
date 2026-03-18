@@ -1986,6 +1986,129 @@ contract RNBWStakingTest is Test {
         assertGt(bobAfterDrip, bobAfterInstant);
     }
 
+    function test_DripRatePreservedOnDustUnstake() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        uint256 rateBefore = staking.rewardRate();
+        assertGt(rateBefore, 0);
+
+        vm.warp(block.timestamp + 3 days);
+
+        rnbwToken.mint(alice, 1 ether);
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 1 ether);
+        staking.stake(1 ether);
+        vm.stopPrank();
+
+        uint256 sharesToBurn = staking.getSharesForRnbw(1 ether);
+        vm.prank(alice);
+        staking.unstake(sharesToBurn);
+
+        assertGe(staking.rewardRate(), rateBefore);
+    }
+
+    function test_DripRateResetsUpwardOnLargeUnstake() public {
+        rnbwToken.mint(alice, 500 ether);
+        rnbwToken.mint(bob, 500 ether);
+
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 500 ether);
+        staking.stake(500 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 500 ether);
+        staking.stake(500 ether);
+        vm.stopPrank();
+
+        uint256 bobHalf = staking.shares(bob) / 2;
+        vm.prank(bob);
+        staking.unstake(bobHalf);
+
+        uint256 rateBefore = staking.rewardRate();
+
+        vm.warp(block.timestamp + 1 days);
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        assertGt(staking.rewardRate(), rateBefore);
+    }
+
+    function test_DripDustUnstakeExtendsDripEndTimeSlightly() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        uint256 originalEnd = staking.dripEndTime();
+        uint256 rateBefore = staking.rewardRate();
+
+        vm.warp(block.timestamp + 6 days);
+
+        rnbwToken.mint(alice, 1 ether);
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 1 ether);
+        staking.stake(1 ether);
+        vm.stopPrank();
+
+        uint256 sharesToBurn = staking.getSharesForRnbw(1 ether);
+        vm.prank(alice);
+        staking.unstake(sharesToBurn);
+
+        assertEq(staking.rewardRate(), rateBefore);
+        assertLt(staking.dripEndTime(), block.timestamp + 7 days);
+    }
+
+    function test_DripFreshCycleAfterExpiredDrip() public {
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        rnbwToken.approve(address(staking), 100 ether);
+        staking.stake(100 ether);
+        vm.stopPrank();
+
+        vm.prank(bob);
+        staking.unstakeAll();
+
+        vm.warp(block.timestamp + 8 days);
+
+        rnbwToken.mint(alice, 50 ether);
+        vm.startPrank(alice);
+        rnbwToken.approve(address(staking), 50 ether);
+        staking.stake(50 ether);
+        vm.stopPrank();
+
+        uint256 aliceShares = staking.shares(alice);
+        vm.prank(alice);
+        staking.unstake(aliceShares / 2);
+
+        assertEq(staking.dripEndTime(), block.timestamp + 7 days);
+        assertEq(staking.rewardRate(), staking.undistributedFees() / 7 days);
+    }
+
     /*//////////////////////////////////////////////////////////////
                       SET DRIP DURATION TESTS
     //////////////////////////////////////////////////////////////*/
