@@ -84,7 +84,7 @@ Steps:
 Both functions return `netAmount` (the RNBW transferred to the user after exit fee).
 
 1. Sync pool -- settle any pending fee drip into `totalPooledRnbw` before calculating.
-2. Validate -- shares > 0, sufficient balance, partial unstake check.
+2. Validate -- shares > 0, sufficient balance, partial unstake check, dust guard (partial unstake must not leave fewer than `MIN_SHARES_THRESHOLD` shares).
 3. Calculate value -- `rnbwValue = (sharesToBurn * totalPooledRnbw) / totalShares`.
 4. Exit fee -- `exitFee = rnbwValue * exitFeeBps / 10,000` (ceil-rounded, default 10%).
 5. Net amount -- if ceil-rounded fee consumes everything (dust), `netAmount = 0` and shares are burned with no transfer (lets users clear dust positions).
@@ -326,10 +326,10 @@ CREATE TABLE staking_events (
     event_type      TEXT NOT NULL,  -- 'stake', 'unstake', 'cashback'
     block_number    BIGINT NOT NULL,
     block_timestamp TIMESTAMPTZ NOT NULL,
-    rnbw_amount     NUMERIC(78,0) NOT NULL,
+    rnbw_amount     NUMERIC(78,0) NOT NULL,  -- gross: rnbwAmount (stake/cashback), rnbwValue (unstake)
     shares_delta    NUMERIC(78,0) NOT NULL,
     exchange_rate   NUMERIC(38,18) NOT NULL,
-    exit_fee        NUMERIC(78,0) DEFAULT 0,
+    exit_fee        NUMERIC(78,0) DEFAULT 0, -- only populated for unstake events
     tx_hash         TEXT NOT NULL,
     UNIQUE(tx_hash, wallet, event_type)
 );
@@ -337,15 +337,27 @@ CREATE TABLE staking_events (
 CREATE INDEX idx_staking_events_wallet ON staking_events(wallet, block_timestamp);
 ```
 
-#### Deriving Exchange Rate From Events (No Extra RPC Calls)
+For unstake events: `rnbw_amount` is the gross value before fee (`rnbwValue` from the event), `exit_fee` is the fee deducted. Net received = `rnbw_amount - exit_fee`. The APY formula uses the net amount (see walkthrough below).
 
-The exchange rate is implicit in every event — no need to emit it separately:
+#### Which Events to Track
 
-| Event | Formula |
-|-------|---------|
-| `Staked(user, rnbwAmount, sharesMinted, _)` | `rnbwAmount / sharesMinted` |
-| `Unstaked(user, sharesBurned, rnbwValue, _, _)` | `rnbwValue / sharesBurned` |
-| `CashbackAllocated(user, rnbwAmount, sharesMinted)` | `rnbwAmount / sharesMinted` |
+Two separate event sets serve different purposes:
+
+**Per-wallet events** — needed for per-wallet APY (TWAC calculation). Each carries the `user` address, shares delta, and RNBW amounts:
+
+| Event | Fields | Exchange Rate |
+|-------|--------|---------------|
+| `Staked(user, rnbwAmount, sharesMinted, _)` | who staked, how much, shares received | `rnbwAmount / sharesMinted` |
+| `Unstaked(user, sharesBurned, rnbwValue, _, _)` | who unstaked, shares burned, gross value, fee | `rnbwValue / sharesBurned` |
+| `CashbackAllocated(user, rnbwAmount, sharesMinted)` | who got cashback, amount, shares minted | `rnbwAmount / sharesMinted` |
+
+**Global pool event** — for tracking the global exchange rate over time without reconstructing it from per-user events:
+
+| Event | Fields | Exchange Rate |
+|-------|--------|---------------|
+| `PoolTotalsUpdated(totalPooledRnbw, totalShares)` | post-operation pool totals (no user address) | `totalPooledRnbw / totalShares` |
+
+`PoolTotalsUpdated` fires after every stake, unstake, and cashback allocation. It is not useful for per-wallet APY because it has no `user` field. Use it when you only need the global rate history (e.g., charting exchange rate over time, computing global APY without the 2-block RPC approach).
 
 > Edge case: the very first stake mints 1000 dead shares, so `sharesMinted = amount - 1000`. The derived rate is still correct but slightly above 1.0.
 
@@ -353,11 +365,11 @@ The exchange rate is implicit in every event — no need to emit it separately:
 
 Events for Alice:
 
-| Event | Timestamp | RNBW Amount | Shares Delta | Exchange Rate |
-|-------|-----------|-------------|-------------|---------------|
-| stake | Jan 1 | 1000 | +1000 | 1.0 |
-| cashback | Mar 1 | 50 | +50 | 1.0 |
-| unstake | Jul 1 | 550 (gross) | -500 | 1.1 |
+| Event | Timestamp | RNBW Amount (gross) | Exit Fee | Net Received | Shares Delta | Exchange Rate |
+|-------|-----------|---------------------|----------|-------------|-------------|---------------|
+| stake | Jan 1 | 1000 | -- | -- | +1000 | 1.0 |
+| cashback | Mar 1 | 50 | -- | -- | +50 | 1.0 |
+| unstake | Jul 1 | 550 | 55 | 495 | -500 | 1.1 |
 
 Step 1 — Build capital periods (what Alice had, for how long):
 
@@ -367,22 +379,24 @@ Step 1 — Build capital periods (what Alice had, for how long):
 | Mar 1 → Jul 1 | 1050 | 1.0 | 1050 | 122 |
 | Jul 1 → Dec 31 | 550 | 1.1 | 605 | 183 |
 
-Each period starts when an event changes the wallet's share balance. The capital is `running_shares × exchange_rate` at that point.
+Each period starts when an event changes the wallet's share balance. The capital is `running_shares × exchange_rate` at that point. The exchange rate changes continuously between events (drip), so this is an approximation — accuracy improves with more frequent user activity.
 
 Step 2 — Compute TWAC:
 
 ```
 TWAC = (1000×59 + 1050×122 + 605×183) / (59 + 122 + 183)
      = (59000 + 128100 + 110715) / 364
-     = 817.9 RNBW
+     = 818.2 RNBW
 ```
 
 Step 3 — Compute net profit:
 
+`totalUnstaked` is the **net** amount after exit fee (matches `totalRnbwUnstaked` in the contract / `net_received` in the indexer), not the gross value.
+
 ```
 netProfit = currentValue + totalUnstaked - totalStaked
-          = 605 + 550 - 1000
-          = 155 RNBW
+          = 605 + 495 - 1000
+          = 100 RNBW
 ```
 
 Step 4 — APY:
@@ -390,9 +404,9 @@ Step 4 — APY:
 ```
 duration = 364 days
 APY = (netProfit / TWAC) × (365.25 / duration)
-    = (155 / 817.9) × (365.25 / 364)
-    = 0.19
-    = 19%
+    = (100 / 818.2) × (365.25 / 364)
+    = 0.123
+    = 12.3%
 ```
 
 #### Formula Summary
@@ -402,10 +416,14 @@ Per-Wallet APY = (netProfit / TWAC) × (secondsPerYear / durationSeconds)
 
 Where:
   netProfit       = stakedAmount + totalUnstaked - totalStaked
+  totalUnstaked   = SUM(rnbw_amount - exit_fee) from unstake events (after exit fee)
+  totalStaked     = SUM(rnbw_amount) from stake events
   TWAC            = Σ(capital_i × duration_i) / Σ(duration_i)
   secondsPerYear  = 31,557,600 (365.25 days)
   durationSeconds = now - first_stake_timestamp
 ```
+
+`totalUnstaked` must use the **net** amount (after exit fee), not the gross. The contract stores this as `totalRnbwUnstaked`; in the indexer compute it as `SUM(rnbw_amount - exit_fee)` for unstake events.
 
 > Most users have 2-10 events, so per-wallet queries are trivially fast even at 500 tx/day.
 
@@ -425,6 +443,7 @@ Where:
 - Dust unstake handling: when ceil-rounded exit fee consumes 100% of a dust unstake, shares are burned with no transfer (clears dust positions without reverting)
 - 2-step safe transfer: `proposeSafe()` + `acceptSafe()` prevents transfer to wrong address
 - Partial unstake toggle: `allowPartialUnstake` (default: disabled)
+- Partial unstake dust guard: when partial unstake is enabled, `_unstake` reverts with `DustSharesRemaining` if the user's remaining shares would be > 0 but < `MIN_SHARES_THRESHOLD` (1e14). Prevents attackers from leaving dust shares to bypass the dead-share sweep and inflate the exchange rate.
 - Preview dust guard: `previewStake(user, amount)` returns 0 instead of reverting for dust amounts and for first-time stakers below `minStakeAmount`
 - Recipient guards: `stakeFor` and `stakeForWithSignature` reject `address(0)`, `address(this)`, and `DEAD_ADDRESS` to prevent token locking and dead-share corruption
 - Batch size limit: `batchAllocateCashbackWithSignature` capped at 50 entries with upfront reserve check
@@ -442,6 +461,7 @@ All user-facing errors include contextual parameters for off-chain debugging. Ad
 | `ZeroSharesMinted` | `(user, amount)` | `_mintShares`, `_allocateCashback` |
 | `InvalidRecipient` | -- | `stakeFor`, `stakeForWithSignature` |
 | `PartialUnstakeDisabled` | `(user, sharesToBurn, totalUserShares)` | `_unstake` |
+| `DustSharesRemaining` | `(user, remainingShares)` | `_unstake` |
 | `DripDurationTooLow` | -- | `setDripDuration` |
 | `DripDurationTooHigh` | -- | `setDripDuration` |
 
