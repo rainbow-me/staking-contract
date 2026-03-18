@@ -59,6 +59,12 @@ interface IRNBWStaking {
     /// @param totalShares The total shares outstanding
     event ExchangeRateUpdated(uint256 totalPooledRnbw, uint256 totalShares);
 
+    /// @notice Emitted after stake, unstake, or cashback allocation — pool totals change but
+    ///         the exchange rate stays ~constant (both sides scale proportionally, modulo rounding dust).
+    /// @param totalPooledRnbw The total RNBW in the staking pool
+    /// @param totalShares The total shares outstanding
+    event PoolTotalsUpdated(uint256 totalPooledRnbw, uint256 totalShares);
+
     /// @notice Emitted when the exit fee is updated
     /// @param oldExitFeeBps The previous exit fee in basis points
     /// @param newExitFeeBps The new exit fee in basis points
@@ -416,7 +422,8 @@ interface IRNBWStaking {
     /// @param amount The amount of RNBW to reclaim
     function defundCashbackReserve(uint256 amount) external;
 
-    /// @notice Propose a new safe address (step 1 of 2-step transfer, callable by current safe only)
+    /// @notice Propose a new safe address (step 1 of 2-step transfer, callable by current safe only).
+    ///         If a previous proposal exists, it is implicitly cancelled (emits SafeProposalCancelled).
     /// @param newSafe The proposed new safe address
     function proposeSafe(address newSafe) external;
 
