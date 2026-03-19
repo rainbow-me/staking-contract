@@ -17,7 +17,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  * @dev Uses exchange rate model with linear fee drip for exit fee distribution:
  *      - Users receive "shares" when staking, not 1:1 RNBW
  *      - Exit fees are buffered in undistributedFees and dripped linearly into
- *        the pool over dripDuration (default 7 days, configurable 7–60 days), producing a smooth exchange rate
+ *        the pool over dripDuration (default 7 days, configurable 1–60 days), producing a smooth exchange rate
  *        curve and preventing whale self-absorption / APY manipulation attacks
  *      - Dead shares (MINIMUM_SHARES = 1000 → DEAD_ADDRESS) prevent the
  *        share inflation / first-depositor attack
@@ -45,7 +45,7 @@ contract RNBWStaking is IRNBWStaking, ReentrancyGuard, Pausable, EIP712 {
     uint256 public constant MINIMUM_SHARES = 1000;
     uint256 public constant MIN_SHARES_THRESHOLD = 1e14;
     address public constant DEAD_ADDRESS = address(0xdead);
-    uint256 public constant MIN_DRIP_DURATION = 7 days;
+    uint256 public constant MIN_DRIP_DURATION = 1 days;
     uint256 public constant MAX_DRIP_DURATION = 60 days;
 
     bytes32 public constant ALLOCATE_CASHBACK_TYPEHASH =

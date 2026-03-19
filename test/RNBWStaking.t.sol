@@ -2176,7 +2176,7 @@ contract RNBWStakingTest is Test {
     function test_SetDripDurationRevertTooLow() public {
         vm.prank(admin);
         vm.expectRevert(IRNBWStaking.DripDurationTooLow.selector);
-        staking.setDripDuration(6 days);
+        staking.setDripDuration(23 hours);
     }
 
     function test_SetDripDurationRevertTooHigh() public {
@@ -2240,7 +2240,7 @@ contract RNBWStakingTest is Test {
         assertEq(staking.dripDuration(), 60 days);
 
         staking.setDripDuration(staking.MIN_DRIP_DURATION());
-        assertEq(staking.dripDuration(), 7 days);
+        assertEq(staking.dripDuration(), 1 days);
         vm.stopPrank();
     }
 }

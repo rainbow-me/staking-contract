@@ -13,7 +13,7 @@ Shares-based staking contract for $RNBW on Base. Exit fees drip linearly into th
 |---------|---------|
 | Staking | `stake()` / `stakeFor()` / `stakeForWithSignature()` -- user calls directly or via relay (Gelato Turbo / Relay.link / EIP-7702). `stakeFor` enables third-party integrations (e.g., liquid staking token). `stakeForWithSignature` stakes from a pre-funded reserve with EIP-712 authorization. |
 | Unstaking | `unstake()` -- user calls directly or via relay. Partial unstake toggleable by admin (default: disabled) |
-| Exit fee | Configurable 1%--75%, default 10% -- dripped linearly into pool over `dripDuration` (default 7 days, configurable 7--60 days) |
+| Exit fee | Configurable 1%--75%, default 10% -- dripped linearly into pool over `dripDuration` (default 7 days, configurable 1--60 days) |
 | Cashback | Backend allocates via `allocateCashbackWithSignature()` -- mints shares immediately in one step |
 | Dead shares | First deposit mints 1000 shares to `0xdead` (UniswapV2-style inflation protection) |
 | Cashback reserve | Pre-funded via `fundCashbackReserve()`, tracked separately, protected from emergency withdrawal |
@@ -123,7 +123,7 @@ The exit fee does not increase the exchange rate instantly. It drips into the po
 
 ### Exit Fee Distribution (Drip System)
 
-Exit fees are not added to the pool instantly. Instead, they are buffered in `undistributedFees` and dripped linearly into `totalPooledRnbw` over `dripDuration` (default 7 days, configurable 7--60 days via `setDripDuration`).
+Exit fees are not added to the pool instantly. Instead, they are buffered in `undistributedFees` and dripped linearly into `totalPooledRnbw` over `dripDuration` (default 7 days, configurable 1--60 days via `setDripDuration`).
 
 This prevents two attack vectors:
 - **Whale self-absorption:** A whale who holds most of the pool cannot unstake in chunks and instantly recapture their own exit fees, because the fees haven't entered the pool yet.
@@ -438,7 +438,7 @@ Where:
 - Min stake floor: `minStakeAmount` cannot be set below 1 RNBW
 - Inflation guard: `ZeroSharesMinted` revert protects depositors from rounding attacks
 - Residual sweep: when only dead shares remain, `totalPooledRnbw` and `undistributedFees` are swept to safe and pool is reset
-- Linear fee drip: exit fees are buffered and dripped over `dripDuration` (7--60 days) to prevent whale self-absorption and APY manipulation
+- Linear fee drip: exit fees are buffered and dripped over `dripDuration` (1--60 days) to prevent whale self-absorption and APY manipulation
 - Exit fee rounding: ceiling division ensures fractional wei favors the protocol
 - Dust unstake handling: when ceil-rounded exit fee consumes 100% of a dust unstake, shares are burned with no transfer (clears dust positions without reverting)
 - 2-step safe transfer: `proposeSafe()` + `acceptSafe()` prevents transfer to wrong address
